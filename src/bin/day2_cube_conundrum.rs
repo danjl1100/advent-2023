@@ -2,28 +2,49 @@ fn main() -> anyhow::Result<()> {
     println!("hello, so many cubes!");
     let input = advent_2023::get_input_string()?;
 
-    let sum = play_cube_game(&input);
-    println!("IDs of valid games sum to: {sum}");
+    let Stats {
+        sum_valid_game_ids,
+        sum_of_powers,
+    } = play_cube_game(&input);
+    println!("Sum of IDs of valid games: {sum_valid_game_ids}");
+    println!("Sum of power for the minimal sets for all games: {sum_of_powers}");
 
     Ok(())
 }
 
-fn play_cube_game(input: &str) -> u32 {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stats {
+    sum_valid_game_ids: u32,
+    sum_of_powers: u32,
+}
+
+fn play_cube_game(input: &str) -> Stats {
     const LIMIT: ColorCounts = ColorCounts {
         red: 12,
         green: 13,
         blue: 14,
     };
 
-    input
+    let games: Vec<_> = input
         .lines()
-        .filter_map(|line| {
+        .map(|line| {
             let (input, game) = parse::game(line).expect("valid game line");
             assert!(input.is_empty());
-
-            game.within_limits(LIMIT).then_some(game.game_id)
+            game
         })
-        .sum()
+        .collect();
+
+    let sum_of_powers = games.iter().map(|game| game.miminal_counts().power()).sum();
+
+    let sum_valid_game_ids = games
+        .iter()
+        .filter_map(|game| game.within_limits(LIMIT).then_some(game.game_id))
+        .sum();
+
+    Stats {
+        sum_valid_game_ids,
+        sum_of_powers,
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,16 +53,23 @@ struct Game {
     reveals: Vec<ColorCounts>,
 }
 impl Game {
-    pub fn within_limits(&self, limit: ColorCounts) -> bool {
+    fn within_limits(&self, limit: ColorCounts) -> bool {
         self.reveals.iter().all(|color_counts| {
             color_counts.red <= limit.red && // format
                 color_counts.green <= limit.green &&
                 color_counts.blue <= limit.blue
         })
     }
+    fn miminal_counts(&self) -> ColorCounts {
+        let mut min = ColorCounts::default();
+        for &reveal in &self.reveals {
+            min = min.elem_max(reveal);
+        }
+        min
+    }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ColorCounts {
     red: u32,
     green: u32,
@@ -71,9 +99,20 @@ impl ColorCounts {
         }
         Ok(new)
     }
+    fn power(&self) -> u32 {
+        self.red * self.green * self.blue
+    }
+    fn elem_max(self, other: Self) -> Self {
+        let Self { red, green, blue } = self;
+        Self {
+            red: red.max(other.red),
+            green: green.max(other.green),
+            blue: blue.max(other.blue),
+        }
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ColorCount {
     Red(u32),
     Green(u32),
@@ -236,5 +275,28 @@ mod parse {
                 ))
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Stats;
+
+    #[test]
+    fn example() {
+        let input = "Game 1: 3 blue, 4 red; 1 red, 2 green, 6 blue; 2 green
+Game 2: 1 blue, 2 green; 3 green, 4 blue, 1 red; 1 green, 1 blue
+Game 3: 8 green, 6 blue, 20 red; 5 blue, 4 red, 13 green; 5 green, 1 red
+Game 4: 1 green, 3 red, 6 blue; 3 green, 6 red; 3 green, 15 blue, 14 red
+Game 5: 6 red, 1 blue, 3 green; 2 blue, 1 red, 2 green";
+
+        let result = super::play_cube_game(input);
+        assert_eq!(
+            result,
+            Stats {
+                sum_valid_game_ids: 8,
+                sum_of_powers: 2286,
+            }
+        );
     }
 }
