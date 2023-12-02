@@ -185,4 +185,24 @@ mod tests {
     fn single_digit_9() {
         assert_eq!(test_fn("nine"), 99);
     }
+
+    #[test]
+    fn example_digits_only() {
+        let input = "1abc2
+pqr3stu8vwx
+a1b2c3d4e5f
+treb7uchet";
+        assert_eq!(test_fn(input), 142);
+    }
+    #[test]
+    fn example_spelled_out() {
+        let input = "two1nine
+eightwothree
+abcone2threexyz
+xtwone3four
+4nineeightseven2
+zoneight234
+7pqrstsixteen";
+        assert_eq!(test_fn(input), 281);
+    }
 }
