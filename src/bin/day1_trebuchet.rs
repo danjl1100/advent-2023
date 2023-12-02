@@ -1,7 +1,6 @@
 use clap::Parser;
 use std::{
     collections::{BTreeMap, VecDeque},
-    io::Read,
     path::PathBuf,
 };
 
@@ -12,16 +11,7 @@ struct Args {
 
 fn main() -> anyhow::Result<()> {
     println!("hello, trebuchet!");
-    let args = Args::parse();
-
-    let input = if let Some(filename) = args.filename {
-        std::fs::read_to_string(filename)?
-    } else {
-        println!("Awaiting instructions from stdin:");
-        let mut input_buf = String::new();
-        std::io::stdin().read_to_string(&mut input_buf)?;
-        input_buf
-    };
+    let input = advent_2023::get_input_string()?;
 
     let sum = sum_calibration_amended_by_a_very_young_elf(&input);
     println!("Sum is: {sum}");
