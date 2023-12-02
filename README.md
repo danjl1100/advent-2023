@@ -4,4 +4,4 @@ Following the [Advent of Code](https://adventofcode.com/2023) exercises.  Will I
 
 ## Listing
 
-1. Day 1 - Trebuchet: Planning to make this as close to a "one-liner" iterator expression as possible, we'll see.
+1. Day 1 - Trebuchet: Complicated quite a bit by the "number word" finding logic
