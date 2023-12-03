@@ -1,8 +1,7 @@
+use advent_2023::CharScanner;
 use clap::Parser;
-use std::{
-    collections::{BTreeMap, VecDeque},
-    path::PathBuf,
-};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -19,21 +18,15 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-struct CharScanner<'a> {
-    line: &'a str,
-    char_indices: std::iter::Peekable<std::str::CharIndices<'a>>,
-    last_indices: VecDeque<usize>,
+struct NumberScanner<'a> {
+    scanner: CharScanner<'a>,
     number_words: BTreeMap<&'static str, usize>,
 }
-const LOOKBACK_LEN: usize = 5;
-const LOOKBACK_MIN: usize = 3;
-const LOOKBACK_MIN_INDEX: usize = LOOKBACK_MIN - 1;
+const LOOKBACK_RANGE: (usize, usize) = (3, 5);
 const BASE_10: u32 = 10;
 
-impl<'a> CharScanner<'a> {
+impl<'a> NumberScanner<'a> {
     fn new(line: &'a str) -> Self {
-        let char_indices = line.char_indices().peekable();
-
         let number_words = BTreeMap::from_iter([
             ("zero", 0),
             ("one", 1),
@@ -47,45 +40,22 @@ impl<'a> CharScanner<'a> {
             ("nine", 9),
         ]);
         Self {
-            line,
-            char_indices,
-            last_indices: VecDeque::with_capacity(LOOKBACK_LEN + 1),
+            scanner: CharScanner::new(line, Some(LOOKBACK_RANGE)),
             number_words,
         }
     }
 }
-impl Iterator for CharScanner<'_> {
+impl Iterator for NumberScanner<'_> {
     type Item = u32;
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((current_index, current_char)) = self.char_indices.next() {
-            let next_index = self.char_indices.peek().map(|(index, _char)| index);
-            self.last_indices.truncate(LOOKBACK_LEN - 1);
-            self.last_indices.push_front(current_index);
-
-            if let Some(digit) = current_char.to_digit(BASE_10) {
-                self.last_indices.clear();
-                return Some(digit);
-            }
-
-            for lookback in LOOKBACK_MIN_INDEX..LOOKBACK_LEN {
-                if let Some(&start_index) = self.last_indices.get(lookback) {
-                    let last_part = next_index
-                        .map(|&next| {
-                            self.line
-                                .get(start_index..next)
-                                .expect("slicing on char boundaries")
-                        })
-                        .unwrap_or(self.line.get(start_index..).expect("slicing on start char"));
-                    if let Some(&number) = self.number_words.get(last_part) {
-                        return Some(u32::try_from(number).expect("single digit fits in u32"));
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
-        // exhausted char_indices
-        None
+        let f_single_char = |current_char: char, _current_index| current_char.to_digit(BASE_10);
+        let f_lookback_str = |last_part: &str, _index_range| {
+            self.number_words
+                .get(last_part)
+                .map(|&number| u32::try_from(number).expect("single digit fits in u32"))
+        };
+        self.scanner
+            .find_next(Some(f_single_char), Some(f_lookback_str))
     }
 }
 
@@ -94,7 +64,7 @@ fn sum_calibration_amended_by_a_very_young_elf(input: &str) -> u32 {
         .lines()
         .filter_map(|line| {
             // NOTE: a single digit on the line means *BOTH* first and last digits are that digit
-            let mut digits = CharScanner::new(line);
+            let mut digits = NumberScanner::new(line);
             // let mut digits = line.chars().filter_map(|char| char.to_digit(BASE_10));
             let first_digit = digits.next()?;
             let last_digit = digits.last().unwrap_or(first_digit);
