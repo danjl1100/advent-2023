@@ -25,7 +25,7 @@ pub struct CharScanner<'a> {
     line: &'a str,
     char_indices: std::iter::Peekable<std::str::CharIndices<'a>>,
     last_indices: VecDeque<usize>,
-    lookback_range: Option<(usize, usize)>,
+    lookback_range_indices: Option<(usize, usize)>,
 }
 
 impl<'a> CharScanner<'a> {
@@ -33,16 +33,19 @@ impl<'a> CharScanner<'a> {
     ///
     /// `lookback_range` - if specified, tuple: (min_length, max_length) where [`Self::find_next`]
     ///                    will call `f_lookback_str` for string lengths `min_length..=max_length`
-    pub fn new(line: &'a str, lookback_range: Option<(usize, usize)>) -> Self {
+    pub fn new(line: &'a str, lookback_range_len: Option<(usize, usize)>) -> Self {
         let char_indices = line.char_indices().peekable();
 
-        let lookback_capacity = lookback_range.map(|(_min, len)| len + 1).unwrap_or(0);
+        let lookback_capacity = lookback_range_len.map(|(_min, len)| len + 1).unwrap_or(0);
+
+        let lookback_range_indices =
+            lookback_range_len.map(|(min_len, max_len)| ((min_len - 1), max_len));
 
         Self {
             line,
             char_indices,
             last_indices: VecDeque::with_capacity(lookback_capacity),
-            lookback_range,
+            lookback_range_indices,
         }
     }
     /// Returns the next element matched by a matching function
@@ -54,19 +57,19 @@ impl<'a> CharScanner<'a> {
         f_single_char: Option<impl Fn(char, usize) -> Option<T>>,
         f_lookback_str: Option<impl Fn(&str, (usize, usize)) -> Option<T>>,
     ) -> Option<T> {
-        let lookback_indices = &self.lookback_range.and_then(|(min_len, max_len)| {
-            min_len.checked_sub(1).map(|min_index| min_index..max_len)
-        });
         if f_lookback_str.is_some() {
             assert!(
-                lookback_indices.is_some(),
+                self.lookback_range_indices.is_some(),
                 "f_lookback_str required lookback_range to be specified in constructor"
             );
         }
 
         while let Some((current_index, current_char)) = self.char_indices.next() {
             let next_index = self.char_indices.peek().map(|(index, _char)| index);
-            let lookback_truncate = self.lookback_range.map(|(_min, len)| len - 1).unwrap_or(0);
+            let lookback_truncate = self
+                .lookback_range_indices
+                .map(|(_min, len)| len - 1)
+                .unwrap_or(0);
             self.last_indices.truncate(lookback_truncate);
             self.last_indices.push_front(current_index);
 
@@ -77,7 +80,10 @@ impl<'a> CharScanner<'a> {
                 }
             }
 
-            for lookback in lookback_indices.clone().unwrap_or(0..0) {
+            for lookback in self
+                .lookback_range_indices
+                .map_or(0..0, |(min, len)| min..len)
+            {
                 if let Some(&start_index) = self.last_indices.get(lookback) {
                     let end_index = next_index.map_or(self.line.len(), |&idx| idx);
                     let last_part = self
