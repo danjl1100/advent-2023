@@ -25,7 +25,7 @@ fn interpret_engine_schematic(input: &str) -> Stats {
         .collect();
 
     // DEBUG print entities
-    {
+    if false {
         let mut lines_iter = input.lines().enumerate().peekable();
         let print_line = |(line_number, line)| {
             println!("LINE {:03}: {line}", line_number);
@@ -55,11 +55,48 @@ fn interpret_engine_schematic(input: &str) -> Stats {
         symbols_by_row.entry(row).or_default().push(symbol);
     }
 
+    // DEBUG print entities
+    if true {
+        let lines: Vec<_> = input.lines().collect();
+        let print_lines = |row: usize| {
+            for n in row.saturating_sub(1)..lines.len().min(row + 2) {
+                let line = lines[n];
+                println!("LINE {n:03}: {line}");
+            }
+        };
+        let mut prev_line_printed = None;
+        for entity in &entities {
+            let entity_col_offset = entity.col_start();
+            let padding = " ".to_string().repeat(entity_col_offset + 10);
+            match entity {
+                Entity::Number(number) if !number.region.adjacent_to_symbol(&symbols_by_row) => {
+                    let row = entity.row();
+                    match prev_line_printed {
+                        Some(prev) if prev == row => {}
+                        _ => {
+                            print_lines(row);
+                            prev_line_printed = Some(row);
+                        }
+                    }
+                    let value = number.value;
+                    println!("{padding}{value} NOT adjacent");
+                }
+                // Entity::Symbol(symbol) => println!("{padding}{symbol}"),
+                _ => {}
+            }
+        }
+    }
+
     let part_numbers_sum = entities
         .iter()
         .filter_map(|entity| match entity {
-            Entity::Number(number) if number.region.adjacent_to_symbol(&symbols_by_row) => {
-                Some(number.value)
+            Entity::Number(number) => {
+                if number.region.adjacent_to_symbol(&symbols_by_row) {
+                    Some(number.value)
+                } else {
+                    println!("NOT ADJACENT: {number}");
+                    None
+                }
             }
             _ => None,
         })
