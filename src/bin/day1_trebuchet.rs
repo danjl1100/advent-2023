@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 struct NumberScanner<'a> {
-    scanner: CharScanner<'a>,
+    scanner: CharScanner<'a, u32>,
     number_words: BTreeMap<&'static str, usize>,
 }
 const LOOKBACK_RANGE: (usize, usize) = (3, 5);
