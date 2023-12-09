@@ -1,24 +1,71 @@
+use std::collections::HashMap;
+
 use entity_scanner::EntityScanner;
 
 fn main() -> anyhow::Result<()> {
     println!("hello engine-fixing elf!");
 
     let input = advent_2023::get_input_string()?;
-    let stats = interpret_engine_schematic(&input);
-    dbg!(stats);
+    let Stats { part_numbers_sum } = interpret_engine_schematic(&input);
+
+    println!("Sum of part numbers: {part_numbers_sum}");
+
     Ok(())
 }
 
 #[derive(Debug)]
-struct Stats {}
+struct Stats {
+    part_numbers_sum: u32,
+}
 fn interpret_engine_schematic(input: &str) -> Stats {
     let entities: Vec<_> = input
         .lines()
         .enumerate()
         .flat_map(|(row, line)| EntityScanner::new(row, line))
         .collect();
-    dbg!(entities);
-    Stats {}
+
+    // DEBUG print entities
+    {
+        let mut lines_iter = input.lines().enumerate().peekable();
+        let print_line = |(line_number, line)| {
+            println!("LINE {:03}: {line}", line_number);
+        };
+        for entity in &entities {
+            while let Some(true) = lines_iter.peek().map(|&(index, _)| entity.row() >= index) {
+                print_line(lines_iter.next().expect("peeked some"));
+            }
+            let entity_col_offset = entity.col_start();
+            let padding = " ".to_string().repeat(entity_col_offset + 10);
+            match entity {
+                Entity::Number(number) => println!("{padding}{number}"),
+                Entity::Symbol(symbol) => println!("{padding}{symbol}"),
+            }
+        }
+        for line_elem in lines_iter {
+            print_line(line_elem);
+        }
+    }
+
+    let mut symbols_by_row: HashMap<usize, Vec<Symbol>> = HashMap::new();
+    for symbol in entities.iter().copied().filter_map(|entity| match entity {
+        Entity::Symbol(symbol) => Some(symbol),
+        _ => None,
+    }) {
+        let row = symbol.location.row;
+        symbols_by_row.entry(row).or_default().push(symbol);
+    }
+
+    let part_numbers_sum = entities
+        .iter()
+        .filter_map(|entity| match entity {
+            Entity::Number(number) if number.region.adjacent_to_symbol(&symbols_by_row) => {
+                Some(number.value)
+            }
+            _ => None,
+        })
+        .sum();
+
+    Stats { part_numbers_sum }
 }
 
 mod entity_scanner {
@@ -48,6 +95,7 @@ mod entity_scanner {
             let f_single_char = |current_char: char, col: CharIndex| {
                 (current_char != EMPTY_CHAR && !current_char.is_digit(BASE_10)).then_some(
                     Entity::Symbol(Symbol {
+                        value: current_char,
                         location: Location {
                             row: self.row,
                             col_sequence: col.sequence(),
@@ -64,26 +112,28 @@ mod entity_scanner {
                     let (value, (start_sequence, end_sequence)) = {
                         let mut chars = last_str.chars().peekable();
                         let char_first = chars.next()?;
-                        let char_last = chars.next_back()?; // TODO handle 1-digit line case
-                        let first_is_non_digit = !is_digit(char_first);
-                        let last_is_non_digit = !is_digit(char_last);
-                        let (include_first, include_last) = if start_index.is_zero()
-                            && end_index.is_end()
-                        {
-                            // case: entire line
-                            Some((true, true))
-                        } else if start_index.is_zero() && last_is_non_digit {
-                            // case: beginning
-                            Some((true, false))
-                        } else if first_is_non_digit && last_is_non_digit && chars.peek().is_some()
-                        {
-                            // case: middle
-                            Some((false, false))
-                        } else if first_is_non_digit && end_index.is_end() {
-                            // case: end
-                            Some((false, true))
-                        } else {
-                            None
+                        let char_last = chars.next_back()?;
+                        // NOTE 1-digit case is already handled (e.g. ".9." len=3)
+                        let first_is_digit = is_digit(char_first);
+                        let last_is_digit = is_digit(char_last);
+                        let (include_first, include_last) = match (first_is_digit, last_is_digit) {
+                            (true, true) if start_index.is_zero() && end_index.is_end() => {
+                                // case: entire line
+                                Some((true, true))
+                            }
+                            (true, false) if start_index.is_zero() => {
+                                // case: beginning
+                                Some((true, false))
+                            }
+                            (false, false) if chars.peek().is_some() => {
+                                // case: middle
+                                Some((false, false))
+                            }
+                            (false, true) if end_index.is_end() => {
+                                // case: end
+                                Some((false, true))
+                            }
+                            _ => None,
                         }?;
                         // check ALL cases
                         let first_iter =
@@ -139,11 +189,60 @@ struct Region {
     top_left: Location,
     bottom_right: Location,
 }
+impl Region {
+    fn adjacent_to_symbol(&self, symbols_by_row: &HashMap<usize, Vec<Symbol>>) -> bool {
+        let adjacent_rows = {
+            let row_start = self.top_left.row.saturating_sub(1);
+            let row_end = self.bottom_right.row.saturating_add(1);
+            // ROWS are closed (inclusive of end)
+            row_start..=row_end
+        };
+
+        let adjacent_cols = {
+            let col_start = self.top_left.col_sequence.saturating_sub(1);
+            let col_end = self.bottom_right.col_sequence.saturating_add(1);
+            // COLUMNS are half-open (non-inclusive of end)
+            col_start..col_end
+        };
+
+        // println!("Region checking for rows {adjacent_rows:?}, cols {adjacent_cols:?}");
+        for row in adjacent_rows.clone() {
+            let Some(row_symbols) = symbols_by_row.get(&row) else {
+                continue;
+            };
+            for symbol in row_symbols {
+                let col = symbol.location.col_sequence;
+                if adjacent_cols.contains(&col) {
+                    // println!("\tSymbol matches! {symbol}");
+                    return true;
+                    // } else {
+                    //     println!("\tNOT adjacent.. {symbol}");
+                }
+            }
+        }
+        false
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Entity {
     Number(Number),
     Symbol(Symbol),
+}
+impl Entity {
+    fn row(&self) -> usize {
+        match self {
+            Entity::Number(number) => number.region.top_left.row,
+            Entity::Symbol(symbol) => symbol.location.row,
+        }
+    }
+
+    fn col_start(&self) -> usize {
+        match self {
+            Entity::Number(number) => number.region.top_left.col_sequence,
+            Entity::Symbol(symbol) => symbol.location.col_sequence,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,7 +252,33 @@ pub struct Number {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Symbol {
+    value: char,
     location: Location,
+}
+
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { row, col_sequence } = *self;
+        write!(f, "(r={row},c={col_sequence})")
+    }
+}
+impl std::fmt::Display for Number {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            value,
+            region: Region {
+                top_left,
+                bottom_right,
+            },
+        } = *self;
+        write!(f, "{value} from {top_left} to {bottom_right}")
+    }
+}
+impl std::fmt::Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { value, location } = *self;
+        write!(f, "{value} @{location}")
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +315,7 @@ mod tests {
             assert_eq!(
                 entities,
                 vec![Entity::Symbol(Symbol {
+                    value: '$',
                     location: Location {
                         row,
                         col_sequence: 1,
@@ -206,6 +332,7 @@ mod tests {
             assert_eq!(
                 entities,
                 vec![Entity::Symbol(Symbol {
+                    value: '*',
                     location: Location {
                         row,
                         col_sequence: 4,
@@ -239,6 +366,40 @@ mod tests {
                 vec![Entity::Number(Number {
                     value: 5678,
                     region: region(row, (2, 6)),
+                })]
+            );
+        }
+    }
+    #[test]
+    fn numbers_middle_2() {
+        for row in 0..5 {
+            let line = ".664.598..";
+            let entities: Vec<_> = EntityScanner::new(row, line).collect();
+            assert_eq!(
+                entities,
+                vec![
+                    Entity::Number(Number {
+                        value: 664,
+                        region: region(row, (1, 4)),
+                    }),
+                    Entity::Number(Number {
+                        value: 598,
+                        region: region(row, (5, 8)),
+                    }),
+                ]
+            );
+        }
+    }
+    #[test]
+    fn number_middle_single() {
+        for row in 0..5 {
+            let line = "..5..";
+            let entities: Vec<_> = EntityScanner::new(row, line).collect();
+            assert_eq!(
+                entities,
+                vec![Entity::Number(Number {
+                    value: 5,
+                    region: region(row, (2, 3)),
                 })]
             );
         }
@@ -280,6 +441,7 @@ mod tests {
                 entities,
                 vec![
                     Entity::Symbol(Symbol {
+                        value: '%',
                         location: Location {
                             row,
                             col_sequence: 4
@@ -308,6 +470,7 @@ mod tests {
             .flat_map(|(row, line)| EntityScanner::new(row, line))
             .collect();
         let top_dollar = Entity::Symbol(Symbol {
+            value: '$',
             location: Location {
                 row: 0,
                 col_sequence: 3,
@@ -322,6 +485,7 @@ mod tests {
             region: region(2, (2, 4)),
         });
         let right_star = Entity::Symbol(Symbol {
+            value: '*',
             location: Location {
                 row: 2,
                 col_sequence: 4,
@@ -347,4 +511,30 @@ mod tests {
             ]
         );
     }
+}
+
+#[test]
+fn sample_test() {
+    let input = "467..114..
+...*......
+..35..633.
+......#...
+617*......
+.....+.58.
+..592.....
+......755.
+...$.*....
+.664.598..";
+    let stats = interpret_engine_schematic(input);
+    assert_eq!(stats.part_numbers_sum, 4361);
+}
+
+#[test]
+fn outside_right_corners() {
+    let input = "........
+...*...*
+.5...7..
+...*..6*";
+    let stats = interpret_engine_schematic(input);
+    assert_eq!(stats.part_numbers_sum, 6);
 }
