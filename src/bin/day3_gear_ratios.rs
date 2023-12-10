@@ -59,8 +59,12 @@ fn interpret_engine_schematic(input: &str) -> Stats {
     if true {
         let lines: Vec<_> = input.lines().collect();
         let print_lines = |row: usize| {
-            for n in row.saturating_sub(1)..lines.len().min(row + 2) {
-                let line = lines[n];
+            for (n, line) in lines
+                .iter()
+                .enumerate()
+                .take(row + 2)
+                .skip(row.saturating_sub(1))
+            {
                 println!("LINE {n:03}: {line}");
             }
         };
