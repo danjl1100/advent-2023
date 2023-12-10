@@ -174,6 +174,89 @@ struct Range {
     sources: std::ops::Range<u64>,
     offset: i64,
 }
+impl std::ops::Add for Range {
+    type Output = (Range, Option<Range>, Option<Range>);
+
+    fn add(self, rhs: Self) -> Self::Output {
+        // NOTE: Range has two serial steps:
+        //  1. Match input to `sources`
+        //  2. Apply the offset
+        //
+        // Two `Range`s applied serially execute steps 1.2. then 1.2.
+        //
+        // Combining two `Range`s then involves:
+        //  A. move rhs.sources to the left,
+        //  B. move self.offset to the right
+        let Self {
+            sources: self_sources,
+            offset: self_offset,
+        } = self;
+        let Self {
+            sources: other_sources,
+            offset: other_offset,
+        } = rhs;
+        assert!(!self_sources.is_empty());
+        assert!(!other_sources.is_empty());
+        // Move rhs.sources to the left
+        let other_sources = {
+            let len = other_sources.end - other_sources.start;
+            let old_start = i64::try_from(other_sources.start).unwrap();
+            let new_start = old_start - self_offset;
+            let new_start = u64::try_from(new_start).unwrap();
+            new_start..(new_start + len)
+        };
+        // Move self.offset to the right, depending on range intersections
+        let (self_only, both, other_only) = intersect_ranges(self_sources, other_sources);
+        let self_only = self_only.map(|sources| Self {
+            sources,
+            offset: self_offset,
+        });
+        let both = both.map(|sources| Self {
+            sources,
+            offset: self_offset + other_offset,
+        });
+        let other_only = other_only.map(|sources| Self {
+            sources,
+            offset: other_offset,
+        });
+        let mut outputs = self_only.into_iter().chain(both).chain(other_only);
+        let range1 = outputs.next().expect("at least one resulting range");
+        let range2_opt = outputs.next();
+        let range3_opt = outputs.next();
+        (range1, range2_opt, range3_opt)
+    }
+}
+type StdRange = std::ops::Range<u64>;
+/// Returns the intersection of ranges: (A only, Both, B only)
+fn intersect_ranges(
+    a: StdRange,
+    b: StdRange,
+) -> (Option<StdRange>, Option<StdRange>, Option<StdRange>) {
+    assert!(!a.is_empty());
+    assert!(!b.is_empty());
+    // Ignoring outside the range, there are 4 possibilities:
+    //
+    // 1. |--A--|  |--B--|  Disjoint (2 regions)
+    // 2. |--A-|-AB-|-B--|  Intersect partially (3 regions)
+    // 3. |--B-|-AB-|-A--|  Intersect partially (3 regions)
+    // 4. |---AB---------|  Intersect completely (1 region)
+    let (a_only, both, b_only) = if a.start == b.start && a.end == b.end {
+        let equal = a;
+        (None, Some(equal), None)
+    } else {
+        let a_start_in_b = b.contains(&a.start);
+        let a_end_in_b = b.contains(&a.end);
+        let b_start_in_a = a.contains(&b.start);
+        let b_end_in_a = a.contains(&b.end);
+        if !a_start_in_b && !a_end_in_b && !b_start_in_a && !b_end_in_a {
+            (None, Some(a), Some(b))
+        } else {
+            // TODO
+            todo!()
+        }
+    };
+    (a_only, both, b_only)
+}
 
 #[cfg(test)]
 mod tests {
