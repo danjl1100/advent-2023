@@ -24,10 +24,10 @@ fn evaluate_scatchcards(input: &str) -> anyhow::Result<Stats> {
     let card_wins = input
         .lines()
         .map(|line| {
-            let Some(colon_position) = line.find(":") else {
+            let Some(colon_position) = line.find(':') else {
                 panic!("no colon, invalid line {line:?}");
             };
-            let Some(pipe_position) = line.find("|") else {
+            let Some(pipe_position) = line.find('|') else {
                 panic!("no pipe, invalid line {line:?}");
             };
             let winning_numbers = {
