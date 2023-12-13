@@ -40,7 +40,8 @@ fn get_closest_location(input: &str) -> anyhow::Result<u64> {
 
     println!("There are {} ranges defining seeds.", seed_ranges.len());
 
-    let combined_map = MapUnit::from_map_set(maps.clone(), (START_UNIT_SEED, END_UNIT_LOCATION));
+    let combined_map = MapUnit::from_map_set(maps.clone(), (START_UNIT_SEED, END_UNIT_LOCATION))
+        .expect("combined map not dead-end");
     println!("simplified the map: {combined_map:#?}");
 
     let reversed_map = combined_map.map.clone().reverse();
@@ -105,7 +106,7 @@ fn parse_seeds(line: &str) -> anyhow::Result<Vec<u64>> {
 }
 
 fn parse_maps(mut input_lines: std::str::Lines<'_>) -> anyhow::Result<HashMap<String, MapUnit>> {
-    let mut maps = HashMap::new();
+    let mut map_units = HashMap::new();
     while let Some(title_line) = input_lines.next() {
         let (title_from, title_to) =
             parse_title_line(title_line).with_context(|| format!("title line {title_line:?}"))?;
@@ -118,14 +119,19 @@ fn parse_maps(mut input_lines: std::str::Lines<'_>) -> anyhow::Result<HashMap<St
             let range = parse_range(line).with_context(|| format!("range line {line:?}"))?;
             ranges.push(range);
         }
-        let map = MapUnit {
-            map: Map::new(ranges),
+
+        let Some(map) = Map::try_new(ranges) else {
+            anyhow::bail!("empty map for {title_from}-to-{title_to}")
+        };
+
+        let map_unit = MapUnit {
+            map,
             output_kind: title_to,
         };
 
-        maps.insert(title_from, map);
+        map_units.insert(title_from, map_unit);
     }
-    Ok(maps)
+    Ok(map_units)
 }
 fn parse_title_line(title_line: &str) -> anyhow::Result<(String, String)> {
     const MAP_COLON: &str = "map:";
@@ -183,11 +189,11 @@ pub struct MapUnit {
 }
 #[allow(unused)] // for tests
 impl MapUnit {
-    fn new(ranges: Vec<Range>, output_kind: String) -> Self {
-        Self {
-            map: Map::new(ranges),
+    fn try_new(ranges: Vec<Range>, output_kind: String) -> Option<Self> {
+        Some(Self {
+            map: Map::try_new(ranges)?,
             output_kind,
-        }
+        })
     }
     fn into_parts(self) -> (Vec<Range>, String) {
         let Self { map, output_kind } = self;
@@ -205,9 +211,24 @@ mod map {
         ranges: Vec<Range>,
     }
     impl Map {
-        pub fn new(mut ranges: Vec<Range>) -> Self {
-            ranges.sort_by_key(|range| range.sources.start);
-            Map { ranges }
+        pub fn try_new(mut ranges: Vec<Range>) -> Option<Self> {
+            if ranges.is_empty() {
+                None
+            } else {
+                ranges.sort_by_key(|range| range.sources.start);
+
+                for range_window in ranges.windows(2) {
+                    let [prev, next]: &[Range; 2] = range_window.try_into().expect("windows of 2");
+
+                    // well-defined ranges
+                    assert!(prev.sources.start <= prev.sources.end);
+                    assert!(next.sources.start <= next.sources.end);
+
+                    // no overlap
+                    assert!(prev.sources.end <= next.sources.start);
+                }
+                Some(Map { ranges })
+            }
         }
         pub fn ranges(&self) -> &[Range] {
             &self.ranges
@@ -219,21 +240,30 @@ mod map {
     }
 }
 impl Map {
+    pub fn iter(&self) -> impl Iterator<Item = &Range> {
+        self.ranges().iter()
+    }
+    pub fn find_start_index(&self, start: u64) -> usize {
+        self.ranges()
+            .binary_search_by_key(&start, |r| r.sources.start)
+            .unwrap_or_else(|insert_key| insert_key.saturating_sub(1))
+    }
     pub fn lookup_value(&self, value: u64) -> anyhow::Result<u64> {
         // TODO use binary search instead
-        for range in self.ranges() {
-            if range.sources.contains(&value) {
-                let Ok(value) = i64::try_from(value) else {
-                    anyhow::bail!("value {value} exceeds i64")
-                };
-                let with_offset = value + range.offset;
-                let Ok(with_offset) = u64::try_from(with_offset) else {
-                    anyhow::bail!("offset value {with_offset} exceeds u64")
-                };
-                return Ok(with_offset);
-            }
+        let index = self.find_start_index(value);
+        let range = &self.ranges()[index];
+        if range.sources.contains(&value) {
+            let Ok(value) = i64::try_from(value) else {
+                anyhow::bail!("value {value} exceeds i64")
+            };
+            let with_offset = value + range.offset;
+            let Ok(with_offset) = u64::try_from(with_offset) else {
+                anyhow::bail!("offset value {with_offset} exceeds u64")
+            };
+            Ok(with_offset)
+        } else {
+            anyhow::bail!("no matching range for value {value}")
         }
-        anyhow::bail!("no matching range for value {value}")
     }
 
     pub(crate) fn reverse(self) -> Self {
@@ -250,7 +280,7 @@ impl Map {
                 }
             })
             .collect();
-        Self::new(new_ranges)
+        Self::try_new(new_ranges).expect("nonempty map reverses to nonempty")
     }
 }
 
@@ -259,7 +289,7 @@ fn apply_offset(bound: u64, offset: i64) -> Result<u64, std::num::TryFromIntErro
 }
 
 impl std::ops::Add for MapUnit {
-    type Output = Self;
+    type Output = Option<Self>;
     fn add(self, rhs: Self) -> Self::Output {
         let MapUnit {
             map: lhs_map,
@@ -271,7 +301,6 @@ impl std::ops::Add for MapUnit {
             map: rhs_map,
             output_kind: rhs_output_kind,
         } = rhs;
-        let rhs_ranges = rhs_map.into_inner();
 
         let mut ranges = vec![];
         for lhs_range in lhs_ranges {
@@ -282,13 +311,13 @@ impl std::ops::Add for MapUnit {
             let lhs_range_start_translated =
                 apply_offset(lhs_range_start, lhs_offset).expect("offset range out of bounds");
 
-            let rhs_index = rhs_ranges
-                .binary_search_by_key(&lhs_range_start_translated, |r| r.sources.start)
-                .unwrap_or_else(|insert_key| insert_key.saturating_sub(1));
+            let rhs_index = rhs_map.find_start_index(lhs_range_start_translated);
+
             let mut prev_range_end = lhs_range_start;
-            for rhs_range in rhs_ranges.iter().skip(rhs_index) {
-                let rhs_range_end = apply_offset(rhs_range.sources.end, -lhs_offset)
-                    .expect("offset range out of bounds");
+            for rhs_range in rhs_map.iter().skip(rhs_index) {
+                let Ok(rhs_range_end) = apply_offset(rhs_range.sources.end, -lhs_offset) else {
+                    continue;
+                };
 
                 if prev_range_end >= lhs_range_end {
                     // accumulated ranges has filled the entire "lhs_range" input as desired
@@ -313,10 +342,10 @@ impl std::ops::Add for MapUnit {
                 prev_range_end = new_range_end;
             }
         }
-        Self {
-            map: Map::new(ranges),
+        Some(Self {
+            map: Map::try_new(ranges)?,
             output_kind: rhs_output_kind,
-        }
+        })
     }
 }
 
@@ -324,16 +353,16 @@ impl MapUnit {
     fn from_map_set(
         mut maps: HashMap<String, MapUnit>,
         (start_unit, end_unit): (&'static str, &'static str),
-    ) -> Self {
+    ) -> Option<Self> {
         let start_map = maps.remove(start_unit).expect("start unit present in map");
         let mut result_map = start_map;
         while result_map.output_kind != end_unit {
             let next_map = maps
                 .remove(&result_map.output_kind)
                 .expect("break in output kind linkage");
-            result_map = result_map + next_map;
+            result_map = (result_map + next_map)?;
         }
-        result_map
+        Some(result_map)
     }
 }
 
@@ -695,9 +724,13 @@ humidity-to-location map:
         assert_eq!(closest, 46);
     }
 
+    fn map_unit(ranges: Vec<Range>, output_kind: &'static str) -> MapUnit {
+        MapUnit::try_new(ranges, output_kind.to_string()).expect("nonempty ranges as test input")
+    }
+
     #[test]
     fn adding_maps_one_to_one() {
-        let map1 = MapUnit::new(
+        let map1 = map_unit(
             vec![
                 Range {
                     sources: 5..10,
@@ -712,9 +745,9 @@ humidity-to-location map:
                     offset: -10,
                 },
             ],
-            "dummy".to_string(),
+            "dummy",
         );
-        let map2 = MapUnit::new(
+        let map2 = map_unit(
             vec![
                 Range {
                     sources: 7..12,
@@ -729,10 +762,10 @@ humidity-to-location map:
                     offset: 9000,
                 },
             ],
-            "final output kind".to_string(),
+            "final output kind",
         );
         let result = map1 + map2;
-        let (ranges, output_kind) = result.into_parts();
+        let (ranges, output_kind) = result.expect("not dead-end").into_parts();
         assert_eq!(
             ranges,
             vec![
@@ -755,14 +788,14 @@ humidity-to-location map:
 
     #[test]
     fn adding_maps_splits() {
-        let map1 = MapUnit::new(
+        let map1 = map_unit(
             vec![Range {
                 sources: 10..30,
                 offset: 20,
             }],
-            "dummy".to_string(),
+            "dummy",
         );
-        let map2 = MapUnit::new(
+        let map2 = map_unit(
             vec![
                 Range {
                     sources: 5..40, // NOTE: maps to -15..20
@@ -773,10 +806,10 @@ humidity-to-location map:
                     offset: 100,
                 },
             ],
-            "final output kind".to_string(),
+            "final output kind",
         );
         let result = map1 + map2;
-        let (ranges, output_kind) = result.into_parts();
+        let (ranges, output_kind) = result.expect("not dead-end").into_parts();
         assert_eq!(
             ranges,
             vec![
@@ -795,7 +828,7 @@ humidity-to-location map:
 
     #[test]
     fn adding_maps_joins() {
-        let map1 = MapUnit::new(
+        let map1 = map_unit(
             vec![
                 Range {
                     sources: 10..30,
@@ -806,9 +839,9 @@ humidity-to-location map:
                     offset: 100,
                 },
             ],
-            "dummy".to_string(),
+            "dummy",
         );
-        let map2 = MapUnit::new(
+        let map2 = map_unit(
             vec![
                 Range {
                     sources: 0..135, // NOTE: maps to 5..95 and also 130..135 and onward
@@ -819,10 +852,10 @@ humidity-to-location map:
                     offset: 20,
                 },
             ],
-            "final output kind".to_string(),
+            "final output kind",
         );
         let result = map1 + map2;
-        let (ranges, output_kind) = result.into_parts();
+        let (ranges, output_kind) = result.expect("not dead-end").into_parts();
         assert_eq!(
             ranges,
             vec![
@@ -845,17 +878,21 @@ humidity-to-location map:
 
     #[test]
     fn dead_end() {
-        let map1 = MapUnit::new(
+        let map1 = map_unit(
             vec![Range {
                 sources: 10..50,
                 offset: 10,
             }],
-            "dummy".to_string(),
+            "dummy",
         );
-        let map2 = MapUnit::new(vec![], "end".to_string());
+        let map2 = map_unit(
+            vec![Range {
+                sources: 0..5,
+                offset: 20,
+            }],
+            "end",
+        );
         let result = map1 + map2;
-        let (ranges, output_kind) = result.into_parts();
-        assert_eq!(output_kind, "end");
-        assert_eq!(ranges, vec![]);
+        assert!(result.is_none());
     }
 }
