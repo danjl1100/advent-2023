@@ -274,76 +274,122 @@ impl Map {
         Self::new(new_ranges)
     }
 }
+impl IntoIterator for Map {
+    type Item = Range;
+    type IntoIter = <Vec<Range> as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_inner().into_iter()
+    }
+}
 
 fn apply_offset(bound: u64, offset: i64) -> Result<u64, std::num::TryFromIntError> {
     u64::try_from(i64::try_from(bound).expect("range input outside i64 bounds") + offset)
 }
+// NOTE: Non-lossy version is not used
+// fn apply_offset_to_range(
+//     src: std::ops::Range<u64>,
+//     offset: i64,
+// ) -> Result<std::ops::Range<u64>, std::num::TryFromIntError> {
+//     let start = apply_offset(src.start, offset)?;
+//     let end = apply_offset(src.end, offset)?;
+//     Ok(start..end)
+// }
+fn apply_offset_to_range_saturating(
+    src: std::ops::Range<u64>,
+    offset: i64,
+) -> std::ops::Range<u64> {
+    let self_offset_neg = offset < 0;
+    let self_offset_mag = u64::try_from(offset.abs()).expect("i64 magnitude fits in u64");
+    let add_sub_fn = if self_offset_neg {
+        u64::saturating_sub
+    } else {
+        u64::saturating_add
+    };
+    let new_start = add_sub_fn(src.start, self_offset_mag);
+    let new_end = add_sub_fn(src.end, self_offset_mag);
+    new_start..new_end
+}
 
 impl std::ops::Add for MapUnit {
     type Output = Self;
-    fn add(self, second: Self) -> Self::Output {
+    fn add(self, b: Self) -> Self::Output {
         let MapUnit {
-            map: first_map,
+            map: map_a,
             output_kind: _,
         } = self;
-        let first_ranges = first_map.into_inner();
 
         let MapUnit {
-            map: second_map,
+            map: map_b,
             output_kind: second_output_kind,
-        } = second;
+        } = b;
+
+        println!("--- BEGIN ADD ---");
+        dbg!(&map_a, &map_b);
 
         let mut ranges = vec![];
-        // TODO need to represent the "gaps" in the first_ranges
-        // to still shift the "identity" first map values  as prescribed by the second map
-        for first_range in first_ranges {
-            let first_range_start = first_range.sources.start;
-            let first_range_end = first_range.sources.end;
-            let first_offset = first_range.offset;
 
-            // Translate the input start of the first range, to the input of the second range
-            let first_range_start_translated =
-                apply_offset(first_range_start, first_offset).expect("offset range out of bounds");
+        for range_a in map_a {
+            let Range {
+                sources: sources_a,
+                offset: offset_a,
+            } = range_a;
 
-            // Find the matching index in the second map
-            //  Must be the range starting with "first_range_start_translated",
-            //   or be the range before that (which may end and encapsulate the start
-            let second_index = second_map.find_start_index(first_range_start_translated);
+            let mut ranges_this_range = vec![];
 
-            // Repeatedly build ranges, start with first_range start
-            let mut prev_range_end = first_range_start;
-            for second_range in second_map.iter().skip(second_index) {
-                if prev_range_end >= first_range_end {
-                    // accumulated ranges have filled the entire "first_range" input as desired
-                    break;
-                }
+            // NOTE quadratic time
+            for range_b in map_b.iter() {
+                let Range {
+                    sources: ref sources_b_unoffset,
+                    offset: offset_b,
+                } = *range_b;
+                let sources_b =
+                    apply_offset_to_range_saturating(sources_b_unoffset.clone(), -offset_a);
 
-                // Translate the end of the second range, to the input of the first range
-                let Ok(second_range_end) = apply_offset(second_range.sources.end, -first_offset)
-                else {
-                    // second range is too big/small, out of bounds when shifted to first range
-                    continue;
-                };
-
-                if prev_range_end >= second_range_end {
-                    // this "second_range" is too short (empty?) for the next input range
+                if sources_b.is_empty() {
                     continue;
                 }
-                let new_range_end = first_range_end.min(second_range_end);
 
-                let new_range = prev_range_end..new_range_end;
-                let new_range = Range {
-                    sources: new_range,
-                    offset: second_range.offset + first_range.offset,
-                };
+                let IntersectedRanges {
+                    both,
+                    a_only: _,
+                    b_only: _,
+                } = intersect_ranges(sources_a.clone(), sources_b.clone());
+                ranges_this_range.extend(both.map(|sources| Range {
+                    sources,
+                    offset: offset_a + offset_b,
+                }));
+            }
 
-                if !new_range.sources.is_empty() {
-                    ranges.push(new_range);
+            println!(
+                "A-range {sources_a:?} offset={offset_a}, intersections {ranges_this_range:?}"
+            );
+            ranges_this_range.sort_by_key(|r| r.sources.start);
+            let mut start = sources_a.start;
+            for range in ranges_this_range {
+                if start < range.sources.start {
+                    let fill = Range {
+                        sources: start..range.sources.start,
+                        offset: offset_a,
+                    };
+                    println!("\tfill in empty range {fill:?}");
+                    ranges.push(fill);
                 }
+                start = range.sources.end;
 
-                prev_range_end = new_range_end;
+                println!("\tadd range {range:?}");
+                ranges.push(range);
+            }
+
+            if start < sources_a.end {
+                let fill = Range {
+                    sources: start..sources_a.end,
+                    offset: offset_a,
+                };
+                println!("\tfill in empty range {fill:?} (tail end)");
+                ranges.push(fill);
             }
         }
+
         Self {
             map: Map::new(ranges),
             output_kind: second_output_kind,
@@ -399,10 +445,11 @@ impl MapUnit {
 // }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Range {
-    sources: std::ops::Range<u64>,
-    offset: i64,
+pub struct Range {
+    pub sources: std::ops::Range<u64>,
+    pub offset: i64,
 }
+// NOTE This does not take into account "a" filtering "b", so not useful
 // impl std::ops::Add for Range {
 //     type Output = Vec<Range>;
 //
@@ -427,18 +474,28 @@ struct Range {
 //         assert!(!self_sources.is_empty());
 //         assert!(!other_sources.is_empty());
 //         // Move rhs.sources to the left
-//         let other_sources = {
-//             let len = other_sources.end - other_sources.start;
-//             let old_start = i64::try_from(other_sources.start).unwrap();
-//             let new_start = old_start - self_offset;
-//             let new_start = u64::try_from(new_start).unwrap();
-//             new_start..(new_start + len)
-//         };
+//         let other_sources = apply_offset_to_range_saturating(other_sources, -self_offset);
+//         // {
+//         //     let self_offset_neg = self_offset < 0;
+//         //     let self_offset_mag =
+//         //         u64::try_from(self_offset.abs()).expect("i64 magnitude fits in u64");
+//         //     // NOTE: Goal is to *SUBTRACT* self_offset.
+//         //     //  If negative, then add the magnitude
+//         //     //  If positive, then subtract the magnitude
+//         //     let add_sub_fn = if self_offset_neg {
+//         //         u64::saturating_add
+//         //     } else {
+//         //         u64::saturating_sub
+//         //     };
+//         //     let new_start = add_sub_fn(other_sources.start, self_offset_mag);
+//         //     let new_end = add_sub_fn(other_sources.end, self_offset_mag);
+//         //     new_start..new_end
+//         // };
 //         // Move self.offset to the right, depending on range intersections
 //         let IntersectedRanges {
 //             both,
 //             a_only: self_only,
-//             b_only: other_only,
+//             b_only: _other_only,
 //         } = intersect_ranges(self_sources, other_sources);
 //
 //         let self_only = self_only.into_iter().map(|sources| Self {
@@ -449,243 +506,246 @@ struct Range {
 //             sources,
 //             offset: self_offset + other_offset,
 //         });
-//         let other_only = other_only.into_iter().map(|sources| Self {
-//             sources,
-//             offset: other_offset,
-//         });
+//         // NOTE: DO NOT include other_only, since `self` is the filter
+//         // let other_only = other_only.into_iter().map(|sources| Self {
+//         //     sources,
+//         //     offset: other_offset,
+//         // });
 //         let output_ranges: Vec<_> = self_only
 //             .into_iter()
 //             .chain(both)
-//             .chain(other_only)
+//             // .chain(other_only)
 //             .collect();
 //         assert!(!output_ranges.is_empty(), "at least one resulting range");
 //         output_ranges
 //     }
 // }
 
-// use crate::arithmetic::{intersect_ranges, IntersectedRanges};
-// mod arithmetic {
-//     type StdRange = std::ops::Range<u64>;
-//     #[derive(Clone, Debug, PartialEq, Eq)]
-//     pub struct IntersectedRanges {
-//         pub both: Option<StdRange>,
-//         pub a_only: Vec<StdRange>,
-//         pub b_only: Vec<StdRange>,
-//     }
-//     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-//     enum Either {
-//         A,
-//         B,
-//     }
-//     impl Either {
-//         fn choose<T>(self, a: T, b: T) -> T {
-//             match self {
-//                 Either::A => a,
-//                 Either::B => b,
-//             }
-//         }
-//     }
-//     /// Returns the intersection of ranges: (A only, Both, B only)
-//     pub fn intersect_ranges(a: StdRange, b: StdRange) -> IntersectedRanges {
-//         assert!(!a.is_empty());
-//         assert!(!b.is_empty());
-//         // Ignoring outside the range, there are 3 possibilities:
-//         //
-//         // 1.    |---AB---------|  Intersect completely (1 region)
-//         // 2.    |--A--|  |--B--|  Disjoint (2 regions)
-//         // 3.i   |--A-|-AB-|-A--|  Contained (3 regions)
-//         // 3.ii  |--B-|-AB-|-B--|  Contained (3 regions)
-//         // 3.iii |--A-|-AB-|-B--|  Intersect partially (3 regions)
-//         // 3.iv  |--B-|-AB-|-A--|  Intersect partially (3 regions)
-//         //
-//         let (mut a_only, both, mut b_only) = if a.start == b.start && a.end == b.end {
-//             // 1. Intersect completely (1 region)
-//             let equal = a;
-//             (vec![], Some(equal), vec![])
-//         } else {
-//             let a_start_in_b = b.contains(&a.start);
-//             let a_end_in_b = b.contains(&a.end);
-//             let b_start_in_a = a.contains(&b.start);
-//             let b_end_in_a = a.contains(&b.end);
-//             if !a_start_in_b && !a_end_in_b && !b_start_in_a && !b_end_in_a {
-//                 // 2. Disjoint (2 regions)
-//                 (vec![a], None, vec![b])
-//             } else {
-//                 // 3. Contained or intersect partially (3 regions)
-//
-//                 // TODO identify the middle 2 of the 4 endpoints
-//                 let endpoints_sorted = {
-//                     let mut endpoints = [
-//                         (Either::A, a.start),
-//                         (Either::A, a.end),
-//                         (Either::B, b.start),
-//                         (Either::B, b.end),
-//                     ];
-//                     endpoints.sort_by(|lhs, rhs| lhs.1.cmp(&rhs.1));
-//                     endpoints
-//                 };
-//                 let both = {
-//                     let [_, (_, both_start), (_, both_end), _] = endpoints_sorted;
-//                     both_start..both_end
-//                 };
-//
-//                 let (a_ranges, b_ranges) = {
-//                     let (left_ty, left) = {
-//                         let [(ty, start), (_, end), _, _] = endpoints_sorted;
-//                         (ty, start..end)
-//                     };
-//                     let (right_ty, right) = {
-//                         let [_, _, (_, start), (ty, end)] = endpoints_sorted;
-//                         (ty, start..end)
-//                     };
-//                     let mut a_ranges = vec![];
-//                     let mut b_ranges = vec![];
-//
-//                     left_ty.choose(&mut a_ranges, &mut b_ranges).push(left);
-//                     right_ty.choose(&mut a_ranges, &mut b_ranges).push(right);
-//                     (a_ranges, b_ranges)
-//                 };
-//
-//                 (a_ranges, Some(both), b_ranges)
-//             }
-//         };
-//         let both = both.and_then(|range| (!range.is_empty()).then_some(range));
-//         a_only.retain(|range| !range.is_empty());
-//         b_only.retain(|range| !range.is_empty());
-//         IntersectedRanges {
-//             both,
-//             a_only,
-//             b_only,
-//         }
-//     }
-//
-//     #[cfg(test)]
-//     mod tests {
-//         use crate::arithmetic::{intersect_ranges, IntersectedRanges};
-//
-//         fn test_symmetric(
-//             (a, b): (std::ops::Range<u64>, std::ops::Range<u64>),
-//             expected: IntersectedRanges,
-//         ) {
-//             let test_forward = intersect_ranges(a.clone(), b.clone());
-//             assert_eq!(test_forward, expected);
-//
-//             let IntersectedRanges {
-//                 both,
-//                 a_only,
-//                 b_only,
-//             } = expected;
-//             let expected_reverse = IntersectedRanges {
-//                 both,
-//                 a_only: b_only,
-//                 b_only: a_only,
-//             };
-//
-//             let test_reverse = intersect_ranges(b, a);
-//             assert_eq!(test_reverse, expected_reverse);
-//         }
-//
-//         // 1.    |---AB---------|  Intersect completely (1 region)
-//         #[test]
-//         fn identical() {
-//             test_symmetric(
-//                 (2..5, 2..5),
-//                 IntersectedRanges {
-//                     both: Some(2..5),
-//                     a_only: vec![],
-//                     b_only: vec![],
-//                 },
-//             );
-//         }
-//         // 2.    |--A--|  |--B--|  Disjoint (2 regions)
-//         #[test]
-//         fn disjoint() {
-//             test_symmetric(
-//                 (2..5, 7..9),
-//                 IntersectedRanges {
-//                     both: None,
-//                     a_only: vec![2..5],
-//                     b_only: vec![7..9],
-//                 },
-//             );
-//         }
-//         // 3.i   |--A-|-AB-|-A--|  Contained (3 regions)
-//         #[test]
-//         fn contained() {
-//             test_symmetric(
-//                 (19..93, 25..30),
-//                 IntersectedRanges {
-//                     both: Some(25..30),
-//                     a_only: vec![19..25, 30..93],
-//                     b_only: vec![],
-//                 },
-//             );
-//         }
-//         #[test]
-//         fn contained_aa_end_empty() {
-//             test_symmetric(
-//                 (19..30, 25..30),
-//                 IntersectedRanges {
-//                     both: Some(25..30),
-//                     a_only: vec![19..25],
-//                     b_only: vec![],
-//                 },
-//             );
-//         }
-//         #[test]
-//         fn contained_aa_start_empty() {
-//             test_symmetric(
-//                 (25..93, 25..30),
-//                 IntersectedRanges {
-//                     both: Some(25..30),
-//                     a_only: vec![30..93],
-//                     b_only: vec![],
-//                 },
-//             );
-//         }
-//         // 3.iii |--A-|-AB-|-B--|  Intersect partially (3 regions)
-//         #[test]
-//         fn intersect_ab() {
-//             test_symmetric(
-//                 (5..30, 10..90),
-//                 IntersectedRanges {
-//                     both: Some(10..30),
-//                     a_only: vec![5..10],
-//                     b_only: vec![30..90],
-//                 },
-//             )
-//         }
-//         #[test]
-//         fn intersect_ab_end_empty() {
-//             test_symmetric(
-//                 (5..30, 10..30),
-//                 IntersectedRanges {
-//                     both: Some(10..30),
-//                     a_only: vec![5..10],
-//                     b_only: vec![],
-//                 },
-//             )
-//         }
-//         #[test]
-//         fn intersect_ab_start_empty() {
-//             test_symmetric(
-//                 (10..30, 10..90),
-//                 IntersectedRanges {
-//                     both: Some(10..30),
-//                     a_only: vec![],
-//                     b_only: vec![30..90],
-//                 },
-//             )
-//         }
-//     }
-// }
+use crate::arithmetic::{intersect_ranges, IntersectedRanges};
+mod arithmetic {
+    type StdRange = std::ops::Range<u64>;
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct IntersectedRanges {
+        pub both: Option<StdRange>,
+        pub a_only: Vec<StdRange>,
+        pub b_only: Vec<StdRange>,
+    }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Either {
+        A,
+        B,
+    }
+    impl Either {
+        fn choose<T>(self, a: T, b: T) -> T {
+            match self {
+                Either::A => a,
+                Either::B => b,
+            }
+        }
+    }
+    /// Returns the intersection of ranges: (A only, Both, B only)
+    pub fn intersect_ranges(a: StdRange, b: StdRange) -> IntersectedRanges {
+        assert!(!a.is_empty());
+        assert!(!b.is_empty());
+        let a_DEBUG = a.clone();
+        let b_DEBUG = b.clone();
+        // Ignoring outside the range, there are 3 possibilities:
+        //
+        // 1.    |---AB---------|  Intersect completely (1 region)
+        // 2.    |--A--|  |--B--|  Disjoint (2 regions)
+        // 3.i   |--A-|-AB-|-A--|  Contained (3 regions)
+        // 3.ii  |--B-|-AB-|-B--|  Contained (3 regions)
+        // 3.iii |--A-|-AB-|-B--|  Intersect partially (3 regions)
+        // 3.iv  |--B-|-AB-|-A--|  Intersect partially (3 regions)
+        //
+        let (mut a_only, both, mut b_only) = if a.start == b.start && a.end == b.end {
+            // 1. Intersect completely (1 region)
+            let equal = a;
+            (vec![], Some(equal), vec![])
+        } else {
+            let a_start_in_b = b.contains(&a.start);
+            let a_end_in_b = b.contains(&a.end);
+            let b_start_in_a = a.contains(&b.start);
+            let b_end_in_a = a.contains(&b.end);
+            if !a_start_in_b && !a_end_in_b && !b_start_in_a && !b_end_in_a {
+                // 2. Disjoint (2 regions)
+                (vec![a], None, vec![b])
+            } else {
+                // 3. Contained or intersect partially (3 regions)
+
+                // TODO identify the middle 2 of the 4 endpoints
+                let endpoints_sorted = {
+                    let mut endpoints = [
+                        (Either::A, a.start),
+                        (Either::A, a.end),
+                        (Either::B, b.start),
+                        (Either::B, b.end),
+                    ];
+                    endpoints.sort_by(|lhs, rhs| lhs.1.cmp(&rhs.1));
+                    endpoints
+                };
+                let both = {
+                    let [_, (_, both_start), (_, both_end), _] = endpoints_sorted;
+                    both_start..both_end
+                };
+
+                let (a_ranges, b_ranges) = {
+                    let (left_ty, left) = {
+                        let [(ty, start), (_, end), _, _] = endpoints_sorted;
+                        (ty, start..end)
+                    };
+                    let (right_ty, right) = {
+                        let [_, _, (_, start), (ty, end)] = endpoints_sorted;
+                        (ty, start..end)
+                    };
+                    let mut a_ranges = vec![];
+                    let mut b_ranges = vec![];
+
+                    left_ty.choose(&mut a_ranges, &mut b_ranges).push(left);
+                    right_ty.choose(&mut a_ranges, &mut b_ranges).push(right);
+                    (a_ranges, b_ranges)
+                };
+
+                (a_ranges, Some(both), b_ranges)
+            }
+        };
+        let both = both.and_then(|range| (!range.is_empty()).then_some(range));
+        a_only.retain(|range| !range.is_empty());
+        b_only.retain(|range| !range.is_empty());
+        println!("Intersection ({a_DEBUG:?}, {b_DEBUG:?}) -> (both: {both:?}, a_only: {a_only:?}, b_only: {b_only:?})");
+        IntersectedRanges {
+            both,
+            a_only,
+            b_only,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::arithmetic::{intersect_ranges, IntersectedRanges};
+
+        fn test_symmetric(
+            (a, b): (std::ops::Range<u64>, std::ops::Range<u64>),
+            expected: IntersectedRanges,
+        ) {
+            let test_forward = intersect_ranges(a.clone(), b.clone());
+            assert_eq!(test_forward, expected);
+
+            let IntersectedRanges {
+                both,
+                a_only,
+                b_only,
+            } = expected;
+            let expected_reverse = IntersectedRanges {
+                both,
+                a_only: b_only,
+                b_only: a_only,
+            };
+
+            let test_reverse = intersect_ranges(b, a);
+            assert_eq!(test_reverse, expected_reverse);
+        }
+
+        // 1.    |---AB---------|  Intersect completely (1 region)
+        #[test]
+        fn identical() {
+            test_symmetric(
+                (2..5, 2..5),
+                IntersectedRanges {
+                    both: Some(2..5),
+                    a_only: vec![],
+                    b_only: vec![],
+                },
+            );
+        }
+        // 2.    |--A--|  |--B--|  Disjoint (2 regions)
+        #[test]
+        fn disjoint() {
+            test_symmetric(
+                (2..5, 7..9),
+                IntersectedRanges {
+                    both: None,
+                    a_only: vec![2..5],
+                    b_only: vec![7..9],
+                },
+            );
+        }
+        // 3.i   |--A-|-AB-|-A--|  Contained (3 regions)
+        #[test]
+        fn contained() {
+            test_symmetric(
+                (19..93, 25..30),
+                IntersectedRanges {
+                    both: Some(25..30),
+                    a_only: vec![19..25, 30..93],
+                    b_only: vec![],
+                },
+            );
+        }
+        #[test]
+        fn contained_aa_end_empty() {
+            test_symmetric(
+                (19..30, 25..30),
+                IntersectedRanges {
+                    both: Some(25..30),
+                    a_only: vec![19..25],
+                    b_only: vec![],
+                },
+            );
+        }
+        #[test]
+        fn contained_aa_start_empty() {
+            test_symmetric(
+                (25..93, 25..30),
+                IntersectedRanges {
+                    both: Some(25..30),
+                    a_only: vec![30..93],
+                    b_only: vec![],
+                },
+            );
+        }
+        // 3.iii |--A-|-AB-|-B--|  Intersect partially (3 regions)
+        #[test]
+        fn intersect_ab() {
+            test_symmetric(
+                (5..30, 10..90),
+                IntersectedRanges {
+                    both: Some(10..30),
+                    a_only: vec![5..10],
+                    b_only: vec![30..90],
+                },
+            )
+        }
+        #[test]
+        fn intersect_ab_end_empty() {
+            test_symmetric(
+                (5..30, 10..30),
+                IntersectedRanges {
+                    both: Some(10..30),
+                    a_only: vec![5..10],
+                    b_only: vec![],
+                },
+            )
+        }
+        #[test]
+        fn intersect_ab_start_empty() {
+            test_symmetric(
+                (10..30, 10..90),
+                IntersectedRanges {
+                    both: Some(10..30),
+                    a_only: vec![],
+                    b_only: vec![30..90],
+                },
+            )
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use crate::{get_closest_location, MapUnit, Range};
 
     #[test]
-    #[ignore = "try later"]
     fn sample_input() {
         // NOTE: format is [DEST] [SOURCE] [LEN]
         let input = "seeds: 79 14 55 13
@@ -724,29 +784,29 @@ humidity-to-location map:
         let closest = get_closest_location(input).unwrap();
         assert_eq!(closest, 46);
     }
+
+    //     #[test]
+    //     fn simpler_input() {
+    //         // NOTE: format is [DEST] [SOURCE] [LEN]
+    //         let input = "seeds: 79 9999999
+    //
+    // seed-to-soil map:
+    // 50 98 2
+    // 52 50 48
+    //
+    // soil-to-fertilizer map:
+    // 0 15 37
+    // 37 52 2
+    // 39 0 15
+    //
+    // fertilizer-to-location map:
+    // 60 56 37
+    // 56 93 4";
+    //         let closest = get_closest_location(input).unwrap();
+    //         assert_eq!(closest, 35); // TODO why is this 39 outside both the input and output ranges?
+    //     }
+
     #[test]
-    #[ignore = "slowly..."]
-    fn simpler_input() {
-        // NOTE: format is [DEST] [SOURCE] [LEN]
-        let input = "seeds: 79 9999999
-
-seed-to-soil map:
-50 98 2
-52 50 48
-
-soil-to-fertilizer map:
-0 15 37
-37 52 2
-39 0 15
-
-fertilizer-to-location map:
-60 56 37
-56 93 4";
-        let closest = get_closest_location(input).unwrap();
-        assert_eq!(closest, 39); // TODO why is this 39 outside both the input and output ranges?
-    }
-    #[test]
-    #[ignore = "slowly..."]
     fn single_layer() {
         // NOTE: format is [DEST] [SOURCE] [LEN]
         let input = "seeds: 5 50
@@ -754,7 +814,7 @@ fertilizer-to-location map:
 seed-to-location map:
 30 20 10";
         let closest = get_closest_location(input).unwrap();
-        assert_eq!(closest, 30);
+        assert_eq!(closest, 5);
     }
 
     fn map_unit(ranges: Vec<Range>, output_kind: &'static str) -> MapUnit {
@@ -846,10 +906,10 @@ seed-to-location map:
         assert_eq!(
             ranges,
             vec![
-                Range {
-                    sources: 5..10,
-                    offset: 2, // only map2
-                },
+                // Range {
+                //     sources: 5..10,
+                //     offset: 2, // only map2
+                // },
                 Range {
                     sources: 10..20,
                     offset: 22, // map1 & map2
@@ -860,24 +920,24 @@ seed-to-location map:
                 },
                 Range {
                     sources: 25..30,
-                    offset: 22, // map1 & map2
+                    offset: 120, // map1 & map2
                 },
-                Range {
-                    sources: 30..40,
-                    offset: 2, // only map2
-                },
+                // Range {
+                //     sources: 30..40,
+                //     offset: 2, // only map2
+                // },
+                // ---
                 // nothing 40..45
-                Range {
-                    sources: 45..70,
-                    offset: 100, // only map2
-                },
+                // Range {
+                //     sources: 45..70,
+                //     offset: 100, // only map2
+                // },
             ]
         );
         assert_eq!(&output_kind, "final output kind");
     }
 
     #[test]
-    #[ignore = "slowly..."]
     fn adding_maps_joins() {
         let map1 = map_unit(
             vec![
@@ -928,8 +988,7 @@ seed-to-location map:
     }
 
     #[test]
-    #[ignore = "slowly..."]
-    fn dead_end() {
+    fn not_really_a_dead_end() {
         let map1 = map_unit(
             vec![Range {
                 sources: 10..50,
@@ -945,6 +1004,14 @@ seed-to-location map:
             "end",
         );
         let result = map1 + map2;
-        assert!(result.map.ranges().is_empty());
+        let (ranges, output_kind) = result.into_parts();
+        assert_eq!(
+            ranges,
+            vec![Range {
+                sources: 10..50,
+                offset: 10,
+            }]
+        );
+        assert_eq!(output_kind, "end");
     }
 }
