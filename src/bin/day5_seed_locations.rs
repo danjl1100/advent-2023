@@ -1,5 +1,4 @@
 use anyhow::Context;
-use map::Map;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -55,7 +54,7 @@ fn get_closest_location(input: &str) -> anyhow::Result<u64> {
         let location = all_locations
             .next()
             .expect("no locations route back to the input seeds");
-        if let Ok(source_seed) = reversed_map.lookup_value(location) {
+        if let Ok(Some(source_seed)) = reversed_map.lookup_value(location) {
             if seed_ranges
                 .iter()
                 .any(|seed_range| seed_range.contains(&source_seed))
@@ -196,21 +195,33 @@ impl MapUnit {
     }
 }
 
+type Range = RangeGeneric<i64>;
+type ReverseRange = RangeGeneric<Option<i64>>;
+
+type Map = map::MapGeneric<i64>;
+type ReverseMap = map::MapGeneric<Option<i64>>;
 mod map {
     //! Privacy boundary to ensure `Map::ranges()` is always sorted
-    use crate::Range;
+    use crate::RangeGeneric;
 
     #[derive(Clone, Debug)]
-    pub struct Map {
+    pub struct MapGeneric<T>
+    where
+        T: std::fmt::Debug,
+    {
         // NOTE: empty means the identity map
-        ranges: Vec<Range>,
+        ranges: Vec<RangeGeneric<T>>,
     }
-    impl Map {
-        pub fn new(mut ranges: Vec<Range>) -> Self {
+    impl<T> MapGeneric<T>
+    where
+        T: std::fmt::Debug,
+    {
+        pub fn new(mut ranges: Vec<RangeGeneric<T>>) -> Self {
             ranges.sort_by_key(|range| range.sources.start);
 
             for range_window in ranges.windows(2) {
-                let [prev, next]: &[Range; 2] = range_window.try_into().expect("windows of 2");
+                let [prev, next]: &[RangeGeneric<T>; 2] =
+                    range_window.try_into().expect("windows of 2");
 
                 // well-defined ranges
                 assert!(prev.sources.start <= prev.sources.end);
@@ -219,19 +230,22 @@ mod map {
                 // no overlap
                 assert!(prev.sources.end <= next.sources.start);
             }
-            Map { ranges }
+            MapGeneric { ranges }
         }
-        pub fn ranges(&self) -> &[Range] {
+        pub fn ranges(&self) -> &[RangeGeneric<T>] {
             &self.ranges
         }
-        pub fn into_inner(self) -> Vec<Range> {
-            let Map { ranges } = self;
+        pub fn into_inner(self) -> Vec<RangeGeneric<T>> {
+            let MapGeneric { ranges } = self;
             ranges
         }
     }
 }
-impl Map {
-    pub fn iter(&self) -> impl Iterator<Item = &Range> {
+impl<T> map::MapGeneric<T>
+where
+    T: std::fmt::Debug,
+{
+    pub fn iter(&self) -> impl Iterator<Item = &RangeGeneric<T>> {
         self.ranges().iter()
     }
     pub fn find_start_index(&self, start: u64) -> usize {
@@ -239,6 +253,32 @@ impl Map {
             .binary_search_by_key(&start, |r| r.sources.start)
             .unwrap_or_else(|insert_key| insert_key.saturating_sub(1))
     }
+}
+impl ReverseMap {
+    pub fn lookup_value(&self, value: u64) -> anyhow::Result<Option<u64>> {
+        let index = self.find_start_index(value);
+        let range = &self.ranges()[index];
+        if range.sources.contains(&value) {
+            let Ok(value) = i64::try_from(value) else {
+                anyhow::bail!("value {value} exceeds i64")
+            };
+            if let Some(offset) = range.offset {
+                let with_offset = value + offset;
+                let Ok(with_offset) = u64::try_from(with_offset) else {
+                    anyhow::bail!("offset value {with_offset} exceeds u64")
+                };
+                Ok(Some(with_offset))
+            } else {
+                Ok(None)
+            }
+        } else {
+            // non-mapped values are understood as Identity
+            Ok(Some(value))
+        }
+    }
+}
+impl Map {
+    #[allow(unused)]
     pub fn lookup_value(&self, value: u64) -> anyhow::Result<u64> {
         let index = self.find_start_index(value);
         let range = &self.ranges()[index];
@@ -257,26 +297,56 @@ impl Map {
         }
     }
 
-    pub(crate) fn reverse(self) -> Self {
+    pub(crate) fn reverse(self) -> ReverseMap {
         let ranges = self.into_inner();
         let new_ranges = ranges
             .into_iter()
-            .map(|range| {
-                let Range { sources, offset } = range;
-                let new_start = apply_offset(sources.start, offset).expect("offset out of bounds");
-                let new_end = apply_offset(sources.end, offset).expect("offset out of bounds");
-                Range {
-                    sources: new_start..new_end,
-                    offset: -offset,
-                }
+            .flat_map(|range| {
+                // NOTE: If forward maps A..B -> C..D,
+                // then the reverse maps C..D -> A..B, as well as the remainder going to null
+                let Range {
+                    sources: sources_input,
+                    offset,
+                } = range;
+
+                let sources_output = {
+                    let new_start =
+                        apply_offset(sources_input.start, offset).expect("offset out of bounds");
+                    let new_end =
+                        apply_offset(sources_input.end, offset).expect("offset out of bounds");
+                    new_start..new_end
+                };
+
+                let reverse = ReverseRange {
+                    sources: sources_output.clone(),
+                    offset: Some(-offset),
+                };
+                let reverse_null = {
+                    let IntersectedRanges {
+                        both: _,
+                        a_only: input_only,
+                        b_only: _,
+                    } = intersect_ranges(sources_input, sources_output.clone());
+                    let [input_only] = input_only
+                        .try_into()
+                        .expect("input to output lengths identical (no double a_only)");
+                    ReverseRange {
+                        sources: input_only,
+                        offset: None,
+                    }
+                };
+                std::iter::once(reverse).chain(std::iter::once(reverse_null))
             })
             .collect();
-        Self::new(new_ranges)
+        ReverseMap::new(new_ranges)
     }
 }
-impl IntoIterator for Map {
-    type Item = Range;
-    type IntoIter = <Vec<Range> as IntoIterator>::IntoIter;
+impl<T> IntoIterator for map::MapGeneric<T>
+where
+    T: std::fmt::Debug,
+{
+    type Item = RangeGeneric<T>;
+    type IntoIter = <Vec<RangeGeneric<T>> as IntoIterator>::IntoIter;
     fn into_iter(self) -> Self::IntoIter {
         self.into_inner().into_iter()
     }
@@ -445,10 +515,20 @@ impl MapUnit {
 // }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Range {
+pub struct RangeGeneric<T> {
     pub sources: std::ops::Range<u64>,
-    pub offset: i64,
+    pub offset: T,
 }
+impl From<Range> for ReverseRange {
+    fn from(value: Range) -> Self {
+        let Range { sources, offset } = value;
+        ReverseRange {
+            sources,
+            offset: Some(offset),
+        }
+    }
+}
+
 // NOTE This does not take into account "a" filtering "b", so not useful
 // impl std::ops::Add for Range {
 //     type Output = Vec<Range>;
@@ -809,12 +889,13 @@ humidity-to-location map:
     #[test]
     fn single_layer() {
         // NOTE: format is [DEST] [SOURCE] [LEN]
-        let input = "seeds: 5 50
+        let input = "seeds: 25 50
 
 seed-to-location map:
-30 20 10";
+30 20 15";
+        // Maps 20..35 -> 30..45
         let closest = get_closest_location(input).unwrap();
-        assert_eq!(closest, 5);
+        assert_eq!(closest, 35);
     }
 
     fn map_unit(ranges: Vec<Range>, output_kind: &'static str) -> MapUnit {
