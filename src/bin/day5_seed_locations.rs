@@ -40,10 +40,10 @@ fn get_closest_location(input: &str) -> anyhow::Result<u64> {
     println!("There are {} ranges defining seeds.", seed_ranges.len());
 
     let combined_map = MapUnit::from_map_set(maps.clone(), (START_UNIT_SEED, END_UNIT_LOCATION));
-    println!("simplified the map: {combined_map:#?}");
+    println!("simplified the map:{combined_map}");
 
     let reversed_map = combined_map.map.clone().reverse();
-    println!("reversed the map: {reversed_map:#?}");
+    println!("reversed the map:{reversed_map}");
 
     let mut all_locations = 0..;
     // let mut all_locations = reversed_map
@@ -219,6 +219,12 @@ mod map {
         pub fn new(mut ranges: Vec<RangeGeneric<T>>) -> Self {
             ranges.sort_by_key(|range| range.sources.start);
 
+            print!("Map::new(");
+            for range in &ranges {
+                print!("{:?}, ", range.sources);
+            }
+            println!(")");
+
             for range_window in ranges.windows(2) {
                 let [prev, next]: &[RangeGeneric<T>; 2] =
                     range_window.try_into().expect("windows of 2");
@@ -299,9 +305,11 @@ impl Map {
 
     pub(crate) fn reverse(self) -> ReverseMap {
         let ranges = self.into_inner();
-        let new_ranges = ranges
+
+        let mut reverse_range_candidates = vec![];
+        let mut new_ranges: Vec<_> = ranges
             .into_iter()
-            .flat_map(|range| {
+            .map(|range| {
                 // NOTE: If forward maps A..B -> C..D,
                 // then the reverse maps C..D -> A..B, as well as the remainder going to null
                 let Range {
@@ -335,9 +343,51 @@ impl Map {
                         offset: None,
                     }
                 };
-                std::iter::once(reverse).chain(std::iter::once(reverse_null))
+                reverse_range_candidates.push(reverse_null);
+                // std::iter::once(reverse).chain(std::iter::once(reverse_null))
+                reverse
             })
             .collect();
+
+        let start_key = |range: &ReverseRange| range.sources.start;
+        new_ranges.sort_by_key(start_key);
+
+        let mut candidates_changed = true;
+        while candidates_changed {
+            candidates_changed = false;
+            reverse_range_candidates = reverse_range_candidates
+                .into_iter()
+                .flat_map(|candidate| {
+                    let wrap_in_range = move |sources| RangeGeneric {
+                        sources,
+                        offset: candidate.offset,
+                    };
+                    for new_range in new_ranges.iter().map(|r| &r.sources) {
+                        let IntersectedRanges {
+                            both: _,
+                            a_only: shortened,
+                            b_only: _,
+                        } = intersect_ranges(candidate.sources.clone(), new_range.clone());
+                        let shortened: Result<[std::ops::Range<u64>; 1], _> = shortened.try_into();
+                        match shortened {
+                            Ok([original]) if original == candidate.sources => continue,
+                            Ok([different]) => {
+                                candidates_changed = true;
+                                return vec![different].into_iter().map(wrap_in_range);
+                            }
+                            Err(shortened) => {
+                                candidates_changed = true;
+                                return shortened.into_iter().map(wrap_in_range);
+                            }
+                        }
+                    }
+                    vec![candidate.sources].into_iter().map(wrap_in_range)
+                })
+                .collect();
+        }
+
+        new_ranges.extend(reverse_range_candidates);
+
         ReverseMap::new(new_ranges)
     }
 }
@@ -394,13 +444,14 @@ impl std::ops::Add for MapUnit {
         } = b;
 
         println!("--- BEGIN ADD ---");
-        dbg!(&map_a, &map_b);
+        println!("map_a = {map_a}");
+        println!("map_b = {map_b}");
 
         let mut ranges = vec![];
 
         for range_a in map_a {
             let Range {
-                sources: sources_a,
+                sources: ref sources_a,
                 offset: offset_a,
             } = range_a;
 
@@ -430,9 +481,7 @@ impl std::ops::Add for MapUnit {
                 }));
             }
 
-            println!(
-                "A-range {sources_a:?} offset={offset_a}, intersections {ranges_this_range:?}"
-            );
+            println!("A-range {range_a}, intersections {ranges_this_range:?}");
             ranges_this_range.sort_by_key(|r| r.sources.start);
             let mut start = sources_a.start;
             for range in ranges_this_range {
@@ -481,6 +530,33 @@ impl MapUnit {
             result_map = result_map + next_map;
         }
         result_map
+    }
+}
+
+impl std::fmt::Display for MapUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { map, output_kind } = self;
+        write!(f, "{map} -> output {output_kind:?}")
+    }
+}
+impl<T> std::fmt::Display for map::MapGeneric<T>
+where
+    T: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for range in self.ranges() {
+            write!(f, "\n\t{range},")?;
+        }
+        Ok(())
+    }
+}
+impl<T> std::fmt::Display for RangeGeneric<T>
+where
+    T: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let RangeGeneric { sources, offset } = self;
+        write!(f, "{sources:?} offset={offset:?}")
     }
 }
 
@@ -627,8 +703,8 @@ mod arithmetic {
     pub fn intersect_ranges(a: StdRange, b: StdRange) -> IntersectedRanges {
         assert!(!a.is_empty());
         assert!(!b.is_empty());
-        let a_DEBUG = a.clone();
-        let b_DEBUG = b.clone();
+        let a_debug = a.clone();
+        let b_debug = b.clone();
         // Ignoring outside the range, there are 3 possibilities:
         //
         // 1.    |---AB---------|  Intersect completely (1 region)
@@ -678,11 +754,18 @@ mod arithmetic {
                         let [_, _, (_, start), (ty, end)] = endpoints_sorted;
                         (ty, start..end)
                     };
-                    let mut a_ranges = vec![];
-                    let mut b_ranges = vec![];
+                    let mut a_ranges = Vec::with_capacity(2);
+                    let mut b_ranges = Vec::with_capacity(2);
+
+                    debug_assert_eq!(a_ranges.capacity(), 2);
+                    debug_assert_eq!(b_ranges.capacity(), 2);
 
                     left_ty.choose(&mut a_ranges, &mut b_ranges).push(left);
                     right_ty.choose(&mut a_ranges, &mut b_ranges).push(right);
+
+                    debug_assert_eq!(a_ranges.capacity(), 2);
+                    debug_assert_eq!(b_ranges.capacity(), 2);
+
                     (a_ranges, b_ranges)
                 };
 
@@ -692,7 +775,7 @@ mod arithmetic {
         let both = both.and_then(|range| (!range.is_empty()).then_some(range));
         a_only.retain(|range| !range.is_empty());
         b_only.retain(|range| !range.is_empty());
-        println!("Intersection ({a_DEBUG:?}, {b_DEBUG:?}) -> (both: {both:?}, a_only: {a_only:?}, b_only: {b_only:?})");
+        println!("Intersection ({a_debug:?}, {b_debug:?}) -> (both: {both:?}, a_only: {a_only:?}, b_only: {b_only:?})");
         IntersectedRanges {
             both,
             a_only,
@@ -895,7 +978,7 @@ seed-to-location map:
 30 20 15";
         // Maps 20..35 -> 30..45
         let closest = get_closest_location(input).unwrap();
-        assert_eq!(closest, 35);
+        assert_eq!(closest, 25);
     }
 
     fn map_unit(ranges: Vec<Range>, output_kind: &'static str) -> MapUnit {
