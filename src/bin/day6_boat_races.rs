@@ -4,18 +4,27 @@ fn main() -> anyhow::Result<()> {
     println!("hello, boat racers!");
 
     let input = advent_2023::get_input_string()?;
-    let product = races_stats(&input)?;
+    let product = races_stats(&input, Kerning::Bad)?;
 
     println!("Product of all combinations for each race: {product}");
 
     Ok(())
 }
 
-fn races_stats(input: &str) -> anyhow::Result<u32> {
-    let races = parse_race_info(input)?;
+/// https://en.wikipedia.org/wiki/Kerning
+enum Kerning {
+    #[allow(unused)]
+    /// Normal, spaces mean spaces
+    Normal,
+    /// You realize the piece of paper just has very bad kerning...
+    Bad,
+}
+
+fn races_stats(input: &str, kerning: Kerning) -> anyhow::Result<u64> {
+    let races = parse_race_info(input, kerning)?;
     dbg!(&races);
 
-    let product: u32 = races
+    let product: u64 = races
         .iter()
         .copied()
         .map(RaceInfo::count_win_options)
@@ -24,7 +33,7 @@ fn races_stats(input: &str) -> anyhow::Result<u32> {
     Ok(product)
 }
 
-fn parse_race_info(input: &str) -> anyhow::Result<Vec<RaceInfo>> {
+fn parse_race_info(input: &str, kerning: Kerning) -> anyhow::Result<Vec<RaceInfo>> {
     const BASE_10: u32 = 10;
 
     let mut lines = input.lines();
@@ -43,17 +52,21 @@ fn parse_race_info(input: &str) -> anyhow::Result<Vec<RaceInfo>> {
         _ => {}
     }
 
-    let parse_int = |s| u32::from_str_radix(s, BASE_10).with_context(|| s.to_string());
+    let parse_int = |s| u64::from_str_radix(s, BASE_10).with_context(|| s.to_string());
 
-    let mut times = line_time
-        .trim_start_matches("Time:")
-        .split_whitespace()
-        .map(parse_int);
+    let mut times = line_time.trim_start_matches("Time:").to_string();
+    let mut distances = line_distance.trim_start_matches("Distance:").to_string();
 
-    let mut distances = line_distance
-        .trim_start_matches("Distance:")
-        .split_whitespace()
-        .map(parse_int);
+    match kerning {
+        Kerning::Normal => {}
+        Kerning::Bad => {
+            times = times.replace(char::is_whitespace, "");
+            distances = distances.replace(char::is_whitespace, "");
+        }
+    }
+
+    let mut times = times.split_whitespace().map(parse_int);
+    let mut distances = distances.split_whitespace().map(parse_int);
 
     let mut races = vec![];
 
@@ -80,8 +93,8 @@ fn parse_race_info(input: &str) -> anyhow::Result<Vec<RaceInfo>> {
 
 #[derive(Clone, Copy, Debug)]
 struct RaceInfo {
-    duration: u32,
-    min_distance: u32,
+    duration: u64,
+    min_distance: u64,
 }
 
 impl RaceInfo {
@@ -99,7 +112,7 @@ impl RaceInfo {
     /// ****|  \
     /// ```
     ///
-    fn count_win_options(self) -> u32 {
+    fn count_win_options(self) -> u64 {
         let Self {
             duration,
             min_distance,
@@ -120,7 +133,7 @@ impl RaceInfo {
 
         let smallest_success = first_fail + 1;
         let success = smallest_success..=(duration - smallest_success);
-        let success_count = u32::try_from(success.clone().count()).expect("no overflow");
+        let success_count = u64::try_from(success.clone().count()).expect("no overflow");
         dbg!(
             self,
             middle,
@@ -130,18 +143,12 @@ impl RaceInfo {
             success_count
         );
         success_count
-
-        // for (index, n) in (1..=middle).rev().enumerate() {
-        //     if n.pow(2) < self.min_distance {
-        //         return (2 * u32::try_from(index).expect("overflow")) + 1;
-        //     }
-        // }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{races_stats, RaceInfo};
+    use crate::{races_stats, Kerning, RaceInfo};
 
     macro_rules! tests {
         (
@@ -207,7 +214,7 @@ mod tests {
     fn sample_input() {
         let input = "Time:      7  15   30
 Distance:  9  40  200";
-        let result = races_stats(input).expect("valid input");
+        let result = races_stats(input, Kerning::Normal).expect("valid input");
         assert_eq!(result, 4 * 8 * 9);
     }
 }
