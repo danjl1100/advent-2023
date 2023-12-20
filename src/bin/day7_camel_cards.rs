@@ -72,7 +72,15 @@ fn parse_hand(line: &str, rules: Rules) -> anyhow::Result<(Hand, Bid)> {
         Rules::Jokers => hand.reinterpret_as_jokers(),
     };
     if hand.ty != debug_original_ty {
-        let cards_str: String = hand.cards.iter().copied().map(|c| format!("{c}")).collect();
+        let cards_str = hand
+            .cards
+            .iter()
+            .copied()
+            .fold(String::new(), |mut acc, c| {
+                use std::fmt::Write;
+                let _ = write!(acc, "{c}");
+                acc
+            });
         let ty = hand.ty;
         let direction = if ty > debug_original_ty {
             "higher"
