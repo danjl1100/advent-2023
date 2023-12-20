@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn races_stats(input: &str) -> anyhow::Result<u32> {
-    let races = parse_race_info(&input)?;
+    let races = parse_race_info(input)?;
     dbg!(&races);
 
     let product: u32 = races
@@ -207,7 +207,7 @@ mod tests {
     fn sample_input() {
         let input = "Time:      7  15   30
 Distance:  9  40  200";
-        let result = races_stats(&input).expect("valid input");
+        let result = races_stats(input).expect("valid input");
         assert_eq!(result, 4 * 8 * 9);
     }
 }
