@@ -981,7 +981,7 @@ seed-to-location map:
 30 20 15";
         // Maps 20..35 -> 30..45
         let closest = get_closest_location(input).unwrap();
-        assert_eq!(closest, 25);
+        assert_eq!(closest, 35);
     }
 
     fn map_unit(ranges: Vec<Range>, output_kind: &'static str) -> MapUnit {
