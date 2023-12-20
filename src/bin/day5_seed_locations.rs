@@ -785,6 +785,9 @@ mod arithmetic {
 
     #[cfg(test)]
     mod tests {
+        // this is needed for many tests!
+        #![allow(clippy::single_range_in_vec_init)]
+
         use crate::arithmetic::{intersect_ranges, IntersectedRanges};
 
         fn test_symmetric(
