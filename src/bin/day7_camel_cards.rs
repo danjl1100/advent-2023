@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{cmp::Reverse, collections::BTreeMap};
 
 fn main() -> anyhow::Result<()> {
     println!("hello, camel cards!");
@@ -35,9 +35,32 @@ fn analyze_hands(input: &str, rules: Rules) -> anyhow::Result<u32> {
 
     // DEBUG
     println!("Sorted Hands:");
-    for (hand, Bid(bid)) in &hands {
+    for (index, (hand, Bid(bid))) in hands.iter().enumerate() {
         let Hand { cards, ty } = hand;
-        println!("\tHand {cards:?} {ty:?}, bid {bid}");
+        // println!("\tHand {cards:?} {ty:?}, bid {bid}");
+
+        // DEBUG, for comparison
+        let ty_number = match ty {
+            Type::HighCard => 1,
+            Type::OnePair => 2,
+            Type::TwoPair => 3,
+            Type::ThreeOfAKind => 4,
+            Type::FullHouse => 5,
+            Type::FourOfAKind => 6,
+            Type::FiveOfAKind => 7,
+        };
+        let cards_str = cards.iter().fold(String::new(), |mut acc, c| {
+            if *c == Card::Joker {
+                acc += "J";
+            } else {
+                acc += &format!("{c}");
+            }
+            acc
+        });
+        println!(
+            "{count:3}. {cards_str} ({bid:3}) {ty_number}",
+            count = index + 1,
+        );
     }
 
     let total_winnings = hands
@@ -148,28 +171,39 @@ enum Type {
 }
 impl From<&[Card; 5]> for Type {
     fn from(cards: &[Card; 5]) -> Self {
-        let mut counts: BTreeMap<Card, usize> = BTreeMap::new();
-        for card in cards {
-            let count = counts.entry(*card).or_default();
-            *count += 1;
-        }
+        let counts = {
+            let mut counts: BTreeMap<Card, usize> = BTreeMap::new();
+            for card in cards {
+                let count = counts.entry(*card).or_default();
+                *count += 1;
+            }
+            counts
+        };
+
+        let count_3_no_jokers = counts.iter().filter(|(_, &count)| count == 3).count();
+        let count_2_no_jokers = counts.iter().filter(|(_, &count)| count == 2).count();
 
         let count_wild = counts.get(&Card::Joker).copied().unwrap_or_default();
+        dbg!(cards, &counts, count_wild);
+        let counts_wild = {
+            let mut counts_wild = counts.clone();
 
-        'outer: for n in (0..5).rev() {
-            for (&card, count) in counts.iter_mut() {
-                if *count == n && card != Card::Joker {
-                    *count += count_wild;
-                    break 'outer;
+            'outer: for n in (0..5).rev() {
+                for (&card, count) in counts_wild.iter_mut() {
+                    if *count == n && card != Card::Joker {
+                        *count += count_wild;
+                        break 'outer;
+                    }
                 }
             }
-        }
+            counts_wild
+        };
 
-        let count_5 = counts.iter().filter(|(_, &count)| count == 5).count();
-        let count_4 = counts.iter().filter(|(_, &count)| count == 4).count();
-        let count_3 = counts.iter().filter(|(_, &count)| count == 3).count();
-        let count_2 = counts.iter().filter(|(_, &count)| count == 2).count();
-        // let count_1 = counts.iter().filter(|(_, &count)| count == 1).count();
+        let count_5 = counts_wild.iter().filter(|(_, &count)| count == 5).count();
+        let count_4 = counts_wild.iter().filter(|(_, &count)| count == 4).count();
+        let count_3 = counts_wild.iter().filter(|(_, &count)| count == 3).count();
+        let count_2 = counts_wild.iter().filter(|(_, &count)| count == 2).count();
+        // let count_1 = counts_wild.iter().filter(|(_, &count)| count == 1).count();
 
         // no longer accurate with wild cards
         // debug_assert_eq!(
@@ -181,18 +215,53 @@ impl From<&[Card; 5]> for Type {
             Self::FiveOfAKind
         } else if count_4 >= 1 {
             Self::FourOfAKind
-        } else if count_3 >= 1 && count_2 >= 1 {
-            Self::FullHouse
-        } else if count_3 >= 1 {
-            Self::ThreeOfAKind
-        } else if count_2 >= 2 {
-            Self::TwoPair
-        } else if count_2 >= 1 {
-            Self::OnePair
         } else {
-            // no longer accurate with wild cards
-            // debug_assert_eq!(count_1 - count_wild, 5);
-            Self::HighCard
+            let mut allow_full_house = count_3_no_jokers >= 1 && count_2_no_jokers >= 1;
+            dbg!(allow_full_house, count_wild, count_3, count_2);
+            if !allow_full_house && count_wild >= 1 && count_3 >= 1 && count_2 >= 1 {
+                let mut count_wild_remaining = count_wild;
+                let mut counts_added: Vec<_> = counts
+                    .iter()
+                    .filter_map(|(&card, &count)| (card != Card::Joker).then_some(count))
+                    .collect();
+                counts_added.sort_by_key(|&n| Reverse(n));
+
+                // assign wilds to 3, then 2, without duplicates
+                let mut counts_added = counts_added.into_iter();
+                let count_first = counts_added.next();
+                let count_second = counts_added.next();
+                dbg!(count_first, count_second);
+                if let Some((mut count_first, mut count_second)) = count_first.zip(count_second) {
+                    // threes
+                    while count_first < 3 && count_wild_remaining > 0 {
+                        count_wild_remaining -= 1;
+                        count_first += 1;
+                    }
+                    while count_second < 2 && count_wild_remaining > 0 {
+                        count_wild_remaining -= 1;
+                        count_second += 1;
+                    }
+                    dbg!(&counts, count_wild, count_first, count_second);
+                    // check again
+                    if count_first >= 3 && count_second >= 2 {
+                        allow_full_house = true;
+                    }
+                }
+            }
+
+            if allow_full_house {
+                Self::FullHouse
+            } else if count_3 >= 1 {
+                Self::ThreeOfAKind
+            } else if count_2 >= 2 {
+                Self::TwoPair
+            } else if count_2 >= 1 {
+                Self::OnePair
+            } else {
+                // no longer accurate with wild cards
+                // debug_assert_eq!(count_1 - count_wild, 5);
+                Self::HighCard
+            }
         }
     }
 }
@@ -291,6 +360,7 @@ mod tests {
                 let hand_str: &'static str = $str;
                 let (hand, _) = parse_hand(&format!("{hand_str} 0"), rules).expect(hand_str);
                 assert_eq!(hand.ty, $expected_ty, "hand {hand_str} {hand:?}");
+                println!("------------------------------");
             })+
         };
     }
@@ -353,6 +423,30 @@ QQQJA 483";
             // FullHouse - not possible, will auto-promote to FourOfAKind
             "2223J" => Type::FourOfAKind;
             "2222J" => Type::FiveOfAKind;
+        }
+    }
+
+    #[test]
+    fn no_sharing_jokers_in_fullhouse() {
+        test_types! {
+            Rules::Jokers;
+            "24J8J" => Type::ThreeOfAKind;
+            "4JTAJ" => Type::ThreeOfAKind;
+            "6AJJ2" => Type::ThreeOfAKind;
+            "J564J" => Type::ThreeOfAKind;
+            "QJ2J8" => Type::ThreeOfAKind;
+        }
+    }
+    #[test]
+    fn full_houses() {
+        test_types! {
+            Rules::Jokers;
+            "226J6" => Type::FullHouse;
+            "2J525" => Type::FullHouse;
+            "AATJT" => Type::FullHouse;
+            "JA8A8" => Type::FullHouse;
+            "Q33JQ" => Type::FullHouse;
+            "QQ5J5" => Type::FullHouse;
         }
     }
 }
