@@ -4,8 +4,11 @@ fn main() -> anyhow::Result<()> {
 
     let inputs = parse_input(&input)?;
 
-    let sum_nexts = sum_next_values(inputs)?;
+    let sum_nexts = sum_next_values(inputs.clone())?;
     println!("Sum of the next predictions: {sum_nexts}");
+
+    let sum_prevs = sum_previous_values(inputs)?;
+    println!("Sum of the previous predictions: {sum_prevs}");
 
     Ok(())
 }
@@ -27,11 +30,18 @@ fn parse_input(input: &str) -> anyhow::Result<Vec<Vec<i64>>> {
 fn sum_next_values(inputs: Vec<Vec<i64>>) -> anyhow::Result<i64> {
     let values = inputs
         .iter()
-        .map(|series| predict_sequence(series))
+        .map(predict_sequence)
         .collect::<anyhow::Result<Vec<_>, _>>()?;
     let sum = values.into_iter().sum();
     Ok(sum)
 }
+fn sum_previous_values(mut inputs: Vec<Vec<i64>>) -> anyhow::Result<i64> {
+    for sequence in inputs.iter_mut() {
+        sequence.reverse();
+    }
+    sum_next_values(inputs)
+}
+
 fn predict_sequence(series: &Vec<i64>) -> anyhow::Result<i64> {
     fn inner_fn(series: &[i64]) -> anyhow::Result<i64> {
         let diffs = series
@@ -65,7 +75,7 @@ fn predict_sequence(series: &Vec<i64>) -> anyhow::Result<i64> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parse_input, sum_next_values};
+    use crate::{parse_input, sum_next_values, sum_previous_values};
 
     #[test]
     fn sample_input() {
@@ -77,5 +87,16 @@ mod tests {
 
         let sum_nexts = sum_next_values(inputs).unwrap();
         assert_eq!(sum_nexts, 114);
+    }
+    #[test]
+    fn sample_reverse() {
+        let input = "0 3 6 9 12 15
+1 3 6 10 15 21
+10 13 16 21 30 45";
+        let inputs = parse_input(input).unwrap();
+        dbg!(&inputs);
+
+        let sum_prevs = sum_previous_values(inputs).unwrap();
+        assert_eq!(sum_prevs, 2);
     }
 }
