@@ -227,3 +227,60 @@ where
         None
     }
 }
+
+pub mod math {
+    use std::num::NonZeroUsize;
+
+    /// Greatest Common Divisor
+    ///
+    /// ```
+    /// use advent_2023::math::gcd;
+    ///
+    /// // trivial cases
+    /// assert_eq!(gcd(0, 3).get(), 3);
+    /// assert_eq!(gcd(2, 0).get(), 2);
+    /// assert_eq!(gcd(0, 0).get(), 1);
+    ///
+    /// // nontrivial
+    /// assert_eq!(gcd(2, 3).get(), 1, "2, 3");
+    /// assert_eq!(gcd(42, 6).get(), 6, "42, 6");
+    /// assert_eq!(gcd(6, 42).get(), 6, "6, 42");
+    /// assert_eq!(gcd(48, 18).get(), 6, "48, 18");
+    ///
+    /// ```
+    pub fn gcd(a: usize, b: usize) -> NonZeroUsize {
+        let one = NonZeroUsize::new(1).expect("nonzero");
+
+        let a = NonZeroUsize::try_from(a).ok();
+        let b = NonZeroUsize::try_from(b).ok();
+
+        match (a, b) {
+            (None, None) => one,
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (Some(a), Some(b)) => {
+                let a = a.get();
+                let b = b.get();
+
+                let (smaller, larger) = if a < b { (a, b) } else { (b, a) };
+                let larger = larger.rem_euclid(smaller);
+
+                gcd(smaller, larger)
+            }
+        }
+    }
+
+    /// Least Common Multiple
+    ///
+    /// ```
+    /// use advent_2023::math::lcm;
+    ///
+    /// assert_eq!(lcm(2, 4), 4);
+    /// assert_eq!(lcm(10, 7), 70);
+    /// assert_eq!(lcm(5, 7), 35);
+    /// ```
+    pub fn lcm(a: usize, b: usize) -> usize {
+        let divisor = gcd(a, b);
+        (a * b) / divisor
+    }
+}

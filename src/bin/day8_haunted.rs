@@ -10,6 +10,10 @@ fn main() -> anyhow::Result<()> {
 
     println!("Shortest path from {start:?} to {end:?} is: {shortest}");
 
+    let parallel_lcm = parsed.find_shortest_parallel('A', 'Z')?;
+
+    println!("Parallel shortest path: {parallel_lcm}");
+
     Ok(())
 }
 
@@ -68,15 +72,15 @@ struct Parsed {
     maps: BTreeMap<Key, (Key, Key)>,
 }
 impl Parsed {
-    fn find_shortest_count(&self, start: Key, end: Key) -> anyhow::Result<usize> {
+    pub fn find_shortest_count(&self, start: Key, end: Key) -> anyhow::Result<usize> {
+        self.find_count(start, |current| current == end)
+    }
+    fn find_count(&self, start: Key, accept_fn: impl Fn(Key) -> bool) -> anyhow::Result<usize> {
         let mut instructions = std::iter::repeat(self.instructions.iter()).flatten();
-
-        // let mut followed_left = BTreeSet::new();
-        // let mut followed_right = BTreeSet::new();
 
         let mut current = start;
         let mut count = 0;
-        while current != end {
+        while !(accept_fn)(current) {
             let Some((value1, value2)) = self.maps.get(&current).copied() else {
                 anyhow::bail!("mapping not found for current {current:?}")
             };
@@ -85,21 +89,44 @@ impl Parsed {
                 anyhow::bail!("instructions iter empty")
             };
 
-            // let followed_set = instruction.choose(&mut followed_left, &mut followed_right);
-            // let duplicate = followed_set.insert(current);
-            // if duplicate {
-            //     return Ok(None);
-            // }
-
             current = instruction.choose(value1, value2);
             count += 1;
         }
         Ok(count)
     }
+
+    pub fn find_shortest_parallel(
+        &self,
+        start_third: char,
+        end_third: char,
+    ) -> anyhow::Result<usize> {
+        let repetition_counts = self
+            .maps
+            .keys()
+            .copied()
+            .filter(|key| key.ends_with(start_third))
+            .map(|start| self.find_count(start, |current| current.ends_with(end_third)))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let parallel_lcm = repetition_counts
+            .iter()
+            .copied()
+            .fold(1, advent_2023::math::lcm);
+
+        println!("{repetition_counts:?} -> {parallel_lcm}");
+
+        Ok(parallel_lcm)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct Key([char; 3]);
+impl Key {
+    fn ends_with(self, expected: char) -> bool {
+        let Self([_, _, end]) = self;
+        end == expected
+    }
+}
 impl std::str::FromStr for Key {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -203,5 +230,23 @@ ZZZ = (ZZZ, ZZZ)";
 
         let shortest = parsed.find_shortest_count(aaa, zzz).unwrap();
         assert_eq!(shortest, 2);
+    }
+
+    #[test]
+    fn sample_input_parallel() {
+        let input = "LR
+
+11A = (11B, XXX)
+11B = (XXX, 11Z)
+11Z = (11B, XXX)
+22A = (22B, XXX)
+22B = (22C, 22C)
+22C = (22Z, 22Z)
+22Z = (22B, 22B)
+XXX = (XXX, XXX)";
+
+        let parsed = parse_input(input).unwrap();
+        let length = parsed.find_shortest_parallel('A', 'Z').unwrap();
+        assert_eq!(length, 6);
     }
 }
