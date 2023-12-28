@@ -284,3 +284,82 @@ pub mod math {
         (a * b) / divisor
     }
 }
+
+pub mod nonempty {
+    /// `Vec` guaranteed to be non-empty
+    ///
+    /// # Usage:
+    ///
+    /// Mutable slice operations are OK
+    ///
+    /// ```
+    /// use advent_2023::{nonempty::NonEmptyVec, vec_nonempty};
+    /// let mut compile_error = NonEmptyVec::new(vec![1, 2, 3]).unwrap();
+    ///
+    /// // slice mutation - allowed
+    /// compile_error[0] = 5;
+    ///
+    /// assert_eq!(compile_error, vec_nonempty![5, 2, 3]);
+    /// ```
+    ///
+    /// Using mutable `Vec` methods is forbidden (slice mutation shown above is fine)
+    /// ```compile_fail
+    /// # use advent_2023::{nonempty::NonEmptyVec, vec_nonempty};
+    /// # let mut compile_error = NonEmptyVec::new(vec![1, 2, 3]).unwrap();
+    /// #
+    /// # // slice mutation - allowed
+    /// # compile_error[0] = 5;
+    /// #
+    /// # assert_eq!(compile_error, vec_nonempty![5, 2, 3]);
+    /// // Vec mutation - disallowed
+    /// compile_error.remove(0);
+    /// ```
+    #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct NonEmptyVec<T>(Vec<T>);
+
+    impl<T> NonEmptyVec<T> {
+        pub fn new(inner: Vec<T>) -> Option<Self> {
+            if inner.is_empty() {
+                None
+            } else {
+                Some(Self(inner))
+            }
+        }
+
+        pub fn first(&self) -> &T {
+            self.0.first().expect("nonempty")
+        }
+
+        pub fn split_first(&self) -> (&T, &[T]) {
+            self.0.split_first().expect("nonempty")
+        }
+    }
+    // NOTE: Mutable access ONLY allowed as a slice
+    impl<T> std::ops::Deref for NonEmptyVec<T> {
+        type Target = [T]; // explicitly *NOT* type Target = Vec<T>;
+        fn deref(&self) -> &Self::Target {
+            &self.0[..]
+        }
+    }
+    impl<T> std::ops::DerefMut for NonEmptyVec<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0[..]
+        }
+    }
+
+    #[macro_export]
+    macro_rules! vec_nonempty {
+        ($elem:expr; $n:expr) => {{
+            let _compile_time_assert = match $n {
+                0 => [][0],
+                _ => {}
+            };
+            let v = vec![$elem; $n];
+            $crate::nonempty::NonEmptyVec::new(v).expect("nonempty via macro")
+        }};
+        ($($x:expr),+ $(,)?) => {{
+            let v = vec![$($x),+];
+            $crate::nonempty::NonEmptyVec::new(v).expect("nonempty via macro")
+        }};
+    }
+}
