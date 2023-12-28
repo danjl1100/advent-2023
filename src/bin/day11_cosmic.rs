@@ -1,4 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+};
+
+const FACTOR_MILLION: NonZeroUsize = const_factor(1_000_000);
 
 fn main() -> anyhow::Result<()> {
     println!("hello, cosmic...?");
@@ -6,7 +11,7 @@ fn main() -> anyhow::Result<()> {
     let input = advent_2023::get_input_string()?;
 
     let original = Galaxies::new(&input)?;
-    let expanded = original.expand();
+    let expanded = original.expand(FACTOR_MILLION);
 
     let distances_sum = expanded.get_distances_sum();
     println!("Sum of distances in expanded: {distances_sum}");
@@ -49,15 +54,20 @@ impl Galaxies {
     fn max_row(&self) -> usize {
         self.points.last().expect("nonempty").row
     }
-    fn expand(self) -> Self {
+    fn expand(self, factor: NonZeroUsize) -> Self {
+        let additive_factor = factor
+            .get()
+            .checked_sub(1)
+            .expect("subtract one from nonzero");
+
         let mut this = self;
         for &dimension in Dimension::ALL {
-            this = this.expand_dimension(dimension);
+            this = this.expand_dimension(dimension, additive_factor);
         }
         println!("Expanded galaxies:\n{this}");
         this
     }
-    fn expand_dimension(self, dimension: Dimension) -> Self {
+    fn expand_dimension(self, dimension: Dimension, additive_factor: usize) -> Self {
         println!("------ EXPAND DIMENSION: {dimension:?} ------");
         let Self {
             mut points,
@@ -78,16 +88,16 @@ impl Galaxies {
             println!("Distances: {distances:?}");
             let diffs = distances
                 .windows(2)
-                // .zip(points_by_dim.keys().copied())
-                // .map(|(values, key)| {
                 .map(|values| {
                     let [prev, next] = values.try_into().expect("windows of 2");
                     let next = next.expect("later elements are all Some");
-                    if let Some(prev) = prev {
+                    let gap_count = if let Some(prev) = prev {
                         next - prev - 1
                     } else {
                         next
-                    }
+                    };
+                    // NOTE: existing empty column counts as 1
+                    gap_count * additive_factor
                 })
                 .collect::<Vec<_>>();
             println!("Diffs: {diffs:?}");
@@ -209,14 +219,40 @@ impl std::ops::Add for Point {
     }
 }
 
+const fn const_factor(factor: usize) -> NonZeroUsize {
+    match NonZeroUsize::new(factor) {
+        Some(v) => v,
+        None =>
+        {
+            #[allow(unconditional_panic)]
+            [][0]
+        }
+    }
+}
+
 impl std::fmt::Display for Galaxies {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { points, max_col } = self;
+        let Self {
+            ref points,
+            max_col,
+        } = *self;
         let max_row = self.max_row();
 
+        if max_col > 1_000 || max_row > 1_000 {
+            return writeln!(f, "[Galaxies display disabled for dimensions > 1000]");
+        }
+
+        // column header
+        write!(f, "  ")?;
+        for col in 0..=max_col {
+            write!(f, "{}", (col / 10) % 10)?;
+        }
+        writeln!(f)?;
+
         let mut points = points.iter().copied().peekable();
-        for row in 0..(max_row + 1) {
-            for col in 0..(max_col + 1) {
+        for row in 0..=max_row {
+            write!(f, "{} ", (row / 10) % 10)?;
+            for col in 0..=max_col {
                 let present = if let Some(next) = points.peek() {
                     if row == next.row && col == next.col {
                         let _ = points.next();
@@ -241,7 +277,13 @@ impl std::fmt::Display for Galaxies {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Galaxies, Point};
+    use std::num::NonZeroUsize;
+
+    use crate::{const_factor, Galaxies, Point};
+
+    const FACTOR_TWO: NonZeroUsize = const_factor(2);
+    const FACTOR_TEN: NonZeroUsize = const_factor(10);
+    const FACTOR_HUNDRED: NonZeroUsize = const_factor(100);
 
     #[test]
     fn simple_distance() {
@@ -254,8 +296,7 @@ mod tests {
         assert_eq!(p2.get_distance(p2), 0);
     }
 
-    #[test]
-    fn sample_input() {
+    fn test_sample_input(factor: NonZeroUsize, expected: usize) {
         let input = "...#......
 .......#..
 #.........
@@ -267,9 +308,22 @@ mod tests {
 .......#..
 #...#.....";
         let original = Galaxies::new(input).unwrap();
-        let expanded = original.expand();
+        let expanded = original.expand(factor);
 
         let distances_sum = expanded.get_distances_sum();
-        assert_eq!(distances_sum, 374);
+        assert_eq!(distances_sum, expected, "factor {factor}");
+    }
+
+    #[test]
+    fn sample_input() {
+        test_sample_input(FACTOR_TWO, 374);
+    }
+    #[test]
+    fn sample_input_10() {
+        test_sample_input(FACTOR_TEN, 1030);
+    }
+    #[test]
+    fn sample_input_100() {
+        test_sample_input(FACTOR_HUNDRED, 8410);
     }
 }
