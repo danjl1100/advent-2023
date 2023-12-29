@@ -314,7 +314,7 @@ pub mod nonempty {
     /// // Vec mutation - disallowed
     /// compile_error.remove(0);
     /// ```
-    #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct NonEmptyVec<T>(Vec<T>);
 
     impl<T> NonEmptyVec<T> {
@@ -344,6 +344,12 @@ pub mod nonempty {
     impl<T> std::ops::DerefMut for NonEmptyVec<T> {
         fn deref_mut(&mut self) -> &mut Self::Target {
             &mut self.0[..]
+        }
+    }
+
+    impl<T: std::fmt::Debug> std::fmt::Debug for NonEmptyVec<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            <Vec<T> as std::fmt::Debug>::fmt(&self.0, f)
         }
     }
 

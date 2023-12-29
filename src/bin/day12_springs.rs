@@ -62,35 +62,58 @@ impl Record {
         })
     }
     fn count_possibilities(&self) -> usize {
+        self.count_possibilities_inner(0)
+    }
+    fn count_possibilities_inner(&self, debug_indent: usize) -> usize {
+        print!("{:width$}", "", width = debug_indent);
+        let debug_indent_next = debug_indent + 4;
+        println!(
+            "[Record::count_possibilities] segments={segments:?} known_counts={known_counts:?}",
+            segments = self.segments,
+            known_counts = self.known_counts
+        );
         let (segment_first, segments_rest) = self.segments.split_first();
 
-        let Some((&count_first, counts_rest)) = self.known_counts.split_first() else {
-            // no counts to match non-empty segments
-            return 0;
-        };
+        let mut total_options = 0;
+        for take_index in 0..self.known_counts.len() {
+            let take_count = take_index + 1;
+            let counts_taken = &self.known_counts[..take_count];
+            let counts_rest = &self.known_counts[take_count..];
 
-        // TODO - need more sophistication for splitting a segment
-        let options = segment_first.count_possibilities(&[count_first]);
+            if segments_rest.is_empty() && !counts_rest.is_empty() {
+                continue;
+            }
 
-        if options == 0 {
-            0
-        } else {
-            let Some(segments_rest) = NonEmptyVec::new(segments_rest.to_vec()) else {
-                // TODO
-                todo!()
-            };
-            let rest = Self {
-                segments: segments_rest,
-                known_counts: counts_rest.to_vec(),
-            };
-            let options_rest = rest.count_possibilities();
+            let options = segment_first.count_possibilities(counts_taken, debug_indent_next);
 
-            options * options_rest
+            if options != 0 {
+                if let Some(segments_rest) = NonEmptyVec::new(segments_rest.to_vec()) {
+                    let rest = Self {
+                        segments: segments_rest,
+                        known_counts: counts_rest.to_vec(),
+                    };
+                    let options_rest = rest.count_possibilities_inner(debug_indent_next);
+
+                    total_options += options * options_rest;
+                    println!("options += {options} * {options_rest} => {total_options}");
+                } else if counts_rest.is_empty() {
+                    // no more segments, and satisfied all counts
+                    total_options += options;
+                    println!("options += {options} (no more counts) => {total_options}");
+                } else {
+                    unreachable!(
+                        "ALREADY CHECKED FOR: options not allowed, segments will be empty while counts is nonempty"
+                    );
+                }
+            } else {
+                println!("options = 0 for that run");
+            }
         }
+        total_options
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct Segment(NonEmptyVec<Part>);
 
 impl Segment {
@@ -102,6 +125,11 @@ impl Segment {
     fn new(
         symbols: &mut std::iter::Peekable<impl Iterator<Item = char>>,
     ) -> anyhow::Result<Option<Self>> {
+        const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
+            Some(v) => v,
+            None => [][0],
+        };
+
         // ignore duplicate separators
         while let Some('.') = symbols.peek() {
             let _ = symbols.next();
@@ -111,8 +139,8 @@ impl Segment {
 
         for symbol in symbols {
             let new = match symbol {
-                '#' => Part::Absolute(1),
-                '?' => Part::Unknown(1),
+                '#' => Part::Absolute(ONE),
+                '?' => Part::Unknown(ONE),
                 '.' => {
                     break;
                 }
@@ -158,31 +186,30 @@ impl SegmentBuilder {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Part {
-    Absolute(usize),
-    Unknown(usize),
+    Absolute(NonZeroUsize),
+    Unknown(NonZeroUsize),
 }
 impl Part {
     fn is_nullable(self) -> bool {
         match self {
-            Part::Absolute(inner) => inner == 0,
+            Part::Absolute(_) => false,
             Part::Unknown(_) => true,
         }
     }
-    //     fn is_empty(self) -> bool {
-    //         match self {
-    //             Part::Absolute(inner) | Part::Unknown(inner) => inner == 0,
-    //         }
-    //     }
 }
 impl std::ops::Add for Part {
     type Output = (Option<Part>, Part);
     fn add(self, other: Self) -> Self::Output {
         match (self, other) {
             (Self::Absolute(count_old), Self::Absolute(count_new)) => {
-                (None, Self::Absolute(count_old + count_new))
+                let sum =
+                    NonZeroUsize::new(count_old.get() + count_new.get()).expect("nonzerousize add");
+                (None, Self::Absolute(sum))
             }
             (Self::Unknown(count_old), Self::Unknown(count_new)) => {
-                (None, Self::Unknown(count_old + count_new))
+                let sum =
+                    NonZeroUsize::new(count_old.get() + count_new.get()).expect("nonzerousize add");
+                (None, Self::Unknown(sum))
             }
             (Self::Absolute(_), Self::Unknown(_)) | (Self::Unknown(_), Self::Absolute(_)) => {
                 (Some(self), other)
@@ -190,21 +217,17 @@ impl std::ops::Add for Part {
         }
     }
 }
-// impl std::ops::Sub<usize> for Part {
-//     type Output = Option<Self>;
-//     fn sub(self, other: usize) -> Self::Output {
-//         match self {
-//             Part::Absolute(inner) => inner.checked_sub(other).map(Part::Absolute),
-//             Part::Unknown(inner) => inner.checked_sub(other).map(Part::Unknown),
-//         }
-//     }
-// }
 impl std::fmt::Debug for Part {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Part::Absolute(count) => write!(f, "#x{count}"),
             Part::Unknown(count) => write!(f, "?x{count}"),
         }
+    }
+}
+impl std::fmt::Debug for Segment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <NonEmptyVec<Part> as std::fmt::Debug>::fmt(&self.0, f)
     }
 }
 
@@ -224,7 +247,7 @@ impl std::fmt::Display for DebugParts {
                 Part::Absolute(count) => ('#', count),
                 Part::Unknown(count) => ('?', count),
             };
-            for _ in 0..count {
+            for _ in 0..count.get() {
                 write!(f, "{symbol}")?;
             }
         }
@@ -239,15 +262,20 @@ mod analysis {
     use std::num::NonZeroUsize;
 
     impl Segment {
-        pub(crate) fn count_possibilities(&self, expected_counts: &[NonZeroUsize]) -> usize {
-            println!("------------------------------");
+        pub(crate) fn count_possibilities(
+            &self,
+            expected_counts: &[NonZeroUsize],
+            debug_indent: usize,
+        ) -> usize {
+            print!("{:width$}", "", width = debug_indent);
+            println!("[Segment::count_possibilities]");
             let Some(counts_split) = expected_counts.split_first_copy() else {
                 // empty counts, nonempty parts (impossible)
                 return 0;
             };
 
             let parts_split = self.0.split_first_copy();
-            SegmentAnalysis::new(parts_split, counts_split).count()
+            SegmentAnalysis::new(parts_split, counts_split, debug_indent).count()
         }
     }
 
@@ -263,6 +291,7 @@ mod analysis {
         fn new(
             parts_split: (Part, &'a [Part]),
             counts_split: (NonZeroUsize, &'a [NonZeroUsize]),
+            debug_indent: usize,
         ) -> Self {
             let (part_first, parts_rest) = parts_split;
             let (count_first, counts_rest) = counts_split;
@@ -272,7 +301,7 @@ mod analysis {
                 count_first,
                 counts_rest,
                 force_left_align: None,
-                debug_indent: 0,
+                debug_indent,
             }
         }
         fn recurse(
@@ -294,7 +323,7 @@ mod analysis {
         }
         /// Counts the number of possibilities for the Segment covering ALL counts
         ///
-        /// Segment = Vec<Part>, and multiple parts can cover one count
+        /// `Segment` = `Vec<Part>`, and multiple parts can cover one count
         ///
         /// |-------------SEGMENT--------------|
         /// |-PART-|-PART-|-PART-|-PART-|-PART-|
@@ -355,7 +384,7 @@ mod analysis {
             force_left_align: Option<ForceLeftAlign>,
         ) -> (usize, &'static str) {
             // ONE part in segment, and ONE count
-            let expected = count_first.get();
+            let expected = count_first;
             match part_first {
                 // Absoulute - must match completely
                 Part::Absolute(count_part) => {
@@ -367,7 +396,7 @@ mod analysis {
                 }
                 // Unknown - possible to slide around
                 Part::Unknown(count_part) => {
-                    if let Some(blank_area) = count_part.checked_sub(expected) {
+                    if let Some(blank_area) = count_part.get().checked_sub(expected.get()) {
                         if force_left_align.is_some() {
                             (1, "unknowns left-aligned covers remaining expected")
                         } else {
@@ -381,14 +410,14 @@ mod analysis {
                 }
             }
         }
-        fn case_absolute(&self, count_part_absolute: usize) -> (usize, &'static str) {
+        fn case_absolute(&self, count_part_absolute: NonZeroUsize) -> (usize, &'static str) {
             // anchored by first
             //
             // For a match, the absolute part MUST fully contain `count_first`
             let count_remaining_opt = self
                 .count_first
                 .get()
-                .checked_sub(count_part_absolute)
+                .checked_sub(count_part_absolute.get())
                 .map(NonZeroUsize::new);
             let counts_next = match count_remaining_opt {
                 Some(None) => {
@@ -418,8 +447,7 @@ mod analysis {
             };
 
             let Some(parts_next) = self.parts_rest.split_first_copy() else {
-                // TODO
-                todo!()
+                return (0, "absolute exhausted parts, but counts remain");
             };
 
             let result = self
@@ -432,10 +460,10 @@ mod analysis {
                 .count();
             (result, "recurse")
         }
-        fn case_unknown(&self, count_part_unknown: usize) -> (usize, &'static str) {
+        fn case_unknown(&self, count_part_unknown: NonZeroUsize) -> (usize, &'static str) {
             if self.force_left_align.is_some()
                 && self.counts_rest.is_empty()
-                && count_part_unknown >= self.count_first.get()
+                && count_part_unknown >= self.count_first
                 && !self.parts_rest.iter().copied().all(Part::is_nullable)
             {
                 return (
@@ -447,27 +475,42 @@ mod analysis {
             // FIXME avoid N-based recurse for Unknowns...
             // For now, input is not excessively long so recurse for each question-mark choice
 
-            // TODO make all parts `NonZeroUsize`
-            let parts_reduced = if count_part_unknown == 1 {
-                // TODO when nonzerousize, this is IDENTICAL to the final `else` case below
-                // remove empty first
-                let Some(parts_next) = self.parts_rest.split_first_copy() else {
-                    // TODO
-                    todo!()
-                };
-                parts_next
-            } else if let Some(part_reduced) = count_part_unknown.checked_sub(1) {
-                let part_reduced = Part::Unknown(part_reduced);
-                // -1 to first
-                (part_reduced, self.parts_rest)
-            } else {
-                // remove empty first
-                let Some(parts_next) = self.parts_rest.split_first_copy() else {
-                    // TODO
-                    todo!()
-                };
-                parts_next
+            let part_reduced_opt = count_part_unknown
+                .get()
+                .checked_sub(1)
+                .map(NonZeroUsize::new);
+            let parts_reduced = match part_reduced_opt {
+                Some(Some(part_reduced)) => {
+                    // if let Some(part_reduced) = count_part_unknown.checked_sub(1) {
+                    let part_reduced = Part::Unknown(part_reduced);
+                    // -1 to first
+                    (part_reduced, self.parts_rest)
+                }
+                Some(None) | None => {
+                    // if count_part_unknown == ONE
+                    // else
+
+                    // remove empty first
+                    let Some(parts_next) = self.parts_rest.split_first_copy() else {
+                        return (0, "unknown exhausted parts, but counts remain");
+                    };
+                    parts_next
+                }
             };
+            let parts_reduced_2 = part_reduced_opt.flatten().and_then(|part_reduced| {
+                let part_reduced_2 = part_reduced.get().checked_sub(1).map(NonZeroUsize::new);
+                match part_reduced_2 {
+                    Some(Some(part_reduced_2)) => {
+                        let part_reduced_2 = Part::Unknown(part_reduced_2);
+                        // -2 (total) to first
+                        Some((part_reduced_2, self.parts_rest))
+                    }
+                    Some(None) | None => {
+                        // remove empty first
+                        self.parts_rest.split_first_copy()
+                    }
+                }
+            });
 
             // split into two possibilities (ON, OFF)
             let unknown_on = {
@@ -477,13 +520,20 @@ mod analysis {
                     Some(None) => {
                         // if self.count_first.get() == 1
                         if let Some(counts_next) = self.counts_rest.split_first_copy() {
-                            self.recurse(
-                                "assume Unknown = ON, reduce count",
-                                parts_reduced,
-                                counts_next,
-                                Some(ForceLeftAlign),
-                            )
-                            .count()
+                            if let Some(parts_reduced_2) = parts_reduced_2 {
+                                // use `part_reduced_2` to add pseudo-separatorof Unknown OFF, after the assumed ON
+                                self.recurse(
+                                    "assume Unknown = ON, pop_front count, parts reduce x2",
+                                    parts_reduced_2,
+                                    counts_next,
+                                    None,
+                                )
+                                .count()
+                            } else {
+                                // the assumed "Unknown ON" completes the count,
+                                // but there remaining counts with no remaining part
+                                dbg!(0)
+                            }
                         } else {
                             // verify remainder is all Unknowns
                             let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
@@ -560,16 +610,33 @@ mod tests {
     use advent_2023::vec_nonempty;
     use std::num::NonZeroUsize;
 
+    macro_rules! vec_parts {
+        ($( $elem:ident ( $value:expr ) ),+ $(,)?) => {
+            vec_nonempty![ $( vec_parts![@elem $elem ( $value ) ] ),+ ]
+        };
+        (@elem Absolute($value:expr)) => {{
+            const VALUE: NonZeroUsize = match NonZeroUsize::new($value) {
+                Some(v) => v,
+                None => [][0],
+            };
+            Part::Absolute(VALUE)
+        }};
+        (@elem Unknown($value:expr)) => {{
+            const VALUE: NonZeroUsize = match NonZeroUsize::new($value) {
+                Some(v) => v,
+                None => [][0],
+            };
+            Part::Unknown(VALUE)
+        }};
+    }
+
     #[test]
     fn parse_segment() {
         let symbols = ".......####??###.";
         let segment = Segment::new_from_str(symbols)
             .expect("characters valid")
             .expect("nonempty");
-        assert_eq!(
-            segment.0,
-            vec_nonempty![Part::Absolute(4), Part::Unknown(2), Part::Absolute(3),]
-        );
+        assert_eq!(segment.0, vec_parts![Absolute(4), Unknown(2), Absolute(3)]);
     }
     #[test]
     fn parse_record() {
@@ -587,11 +654,11 @@ mod tests {
         assert_eq!(
             record.segments,
             vec_nonempty![
-                Segment(vec_nonempty![Part::Absolute(1)]),
-                Segment(vec_nonempty![Part::Absolute(2)]),
-                Segment(vec_nonempty![Part::Absolute(1), Part::Unknown(2)]),
-                Segment(vec_nonempty![Part::Unknown(2), Part::Absolute(2)]),
-                Segment(vec_nonempty![Part::Unknown(1)]),
+                Segment(vec_parts![Absolute(1)]),
+                Segment(vec_parts![Absolute(2)]),
+                Segment(vec_parts![Absolute(1), Unknown(2)]),
+                Segment(vec_parts![Unknown(2), Absolute(2)]),
+                Segment(vec_parts![Unknown(1)]),
             ]
         );
     }
@@ -612,7 +679,7 @@ mod tests {
         else {
             panic!("invalid 0 in specified counts: {counts:?}")
         };
-        let count = segment.count_possibilities(&counts);
+        let count = segment.count_possibilities(&counts, 0);
         assert_eq!(count, expected, "symbols {symbols:?}, counts {counts:?}");
     }
 
@@ -667,6 +734,16 @@ mod tests {
     }
 
     #[test]
+    fn segment_count_split_unknowns() {
+        // 1: #.#
+        test_segment_count("???", &[1, 1], 1);
+        // 1: #.#.
+        // 2: #..#
+        // 3: .#.#
+        test_segment_count("????", &[1, 1], 3);
+    }
+
+    #[test]
     fn segment_first_known() {
         const INPUT: &str = "#?????";
         const INPUT_IMPOSSIBLE: &str = "#?????#";
@@ -684,20 +761,48 @@ mod tests {
         test_segment_count("??#??", &[5], 1);
     }
 
-    // TODO
-    // fn test_record_count(line: &str, expected: usize) {
-    //     let record = Record::new(line).expect("valid line");
-    //     let count = record.count_possibilities();
-    //     assert_eq!(count, expected);
-    // }
-    // #[test]
-    // fn sample_record0() {
-    //     test_record_count("#.#.### 1,1,3", 1);
-    // }
-    // #[test]
-    // fn sample_record1() {
-    //     test_record_count("???.### 1,1,3", 1);
-    // }
+    fn test_record_count(line: &str, expected: usize) {
+        let record = Record::new(line).expect("valid line");
+        let count = record.count_possibilities();
+        assert_eq!(count, expected);
+    }
+    #[test]
+    fn sample_record_perfect() {
+        test_record_count("#.#.### 1,1,3", 1);
+    }
+    #[test]
+    fn sample_record_impossible() {
+        test_record_count("???.### 1,1,3", 1);
+    }
+    #[test]
+    fn sample_record_sliding_multicount() {
+        // 1: #.#.
+        // 2: .#.#
+        // ---
+        // 3: #..#
+        test_record_count("???? 1,1", 2 + 1);
+        // 1. #.#.#.
+        // 2. .#.#.#
+        // ---
+        // 3: #..#.#
+        // 4: #.#..#
+        test_record_count("?????? 1,1,1", 2 + 2);
+        // 1. #.#.#.#.
+        // 2. .#.#.#.#
+        // ---
+        // 3. #..#.#.#
+        // 4. #.#..#.#
+        // 5. #.#.#..#
+        test_record_count("???????? 1,1,1,1", 2 + 3);
+        // 1. #.#.#.#.#.
+        // 2. .#.#.#.#.#
+        // --
+        // 3. #..#.#.#.#
+        // 4. #.#..#.#.#
+        // 5. #.#.#..#.#
+        // 6. #.#.#.#..#
+        test_record_count("?????????? 1,1,1,1,1", 2 + 4);
+    }
 
     // TODO
     //     #[test]

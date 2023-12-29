@@ -11,7 +11,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// https://en.wikipedia.org/wiki/Kerning
+/// <https://en.wikipedia.org/wiki/Kerning>
 enum Kerning {
     #[allow(unused)]
     /// Normal, spaces mean spaces
