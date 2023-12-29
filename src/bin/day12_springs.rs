@@ -426,58 +426,52 @@ mod analysis {
             // anchored by first
             //
             // For a match, the absolute part MUST fully contain `count_first`
-            let count_remaining_opt_opt = self
+            let Some(count_remaining_opt) = self
                 .count_first
                 .get()
                 .checked_sub(count_part_absolute.get())
-                .map(NonZeroUsize::new);
-            let ((counts_next, new_force_left_align), count_remaining_opt) =
-                match count_remaining_opt_opt {
-                    Some(count_remaining_opt @ None) => {
-                        // if self.count_first.get() == count_part_absolute
-                        // Pop count
-                        let Some(counts_next) = self.counts_rest.split_first_copy() else {
-                            // verify remainder is all Unknowns
-                            let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
-                            return if possible {
-                                (1, "absolute exhausted count, remainder is nullable")
-                            } else {
-                                (0, "absolute exhausted count, but remainder is not nullable")
-                            };
+                .map(NonZeroUsize::new)
+            else {
+                // REJECT, Part::Absolute larger than count_first
+                return (0, "absolute too long for current count");
+            };
+
+            let (counts_next, new_force_left_align) =
+                if let Some(count_remaining) = count_remaining_opt {
+                    // Absolute matches all, force align for remaining
+                    ((count_remaining, self.counts_rest), Some(ForceLeftAlign))
+                } else {
+                    // Pop count
+                    let Some(counts_next) = self.counts_rest.split_first_copy() else {
+                        // verify remainder is all Unknowns
+                        let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
+                        return if possible {
+                            (1, "absolute exhausted count, remainder is nullable")
+                        } else {
+                            (0, "absolute exhausted count, but remainder is not nullable")
                         };
-                        ((counts_next, None), count_remaining_opt)
-                    }
-                    Some(count_remaining_opt @ Some(count_remaining)) => {
-                        // else if let Some(count_remaining) = self.count_first.checked_sub(count_part_absolute)
-                        (
-                            ((count_remaining, self.counts_rest), Some(ForceLeftAlign)),
-                            count_remaining_opt,
-                        )
-                    }
-                    None => {
-                        // else
-                        // REJECT, Part::Absolute larger than count_first
-                        return (0, "absolute too long for current count");
-                    }
+                    };
+                    (counts_next, None)
                 };
 
-            let parts_rest_split_opt = self.parts_rest.split_first_copy();
-            let parts_next: (Part, &[Part]) = match (
-                parts_rest_split_opt.as_ref(),
-                count_remaining_opt,
-            ) {
-                (Some((part_next, parts_rest)), None) => match part_next {
-                    // perfect match, need to nullify immediate next
+            let Some((part_next, parts_rest)) = self.parts_rest.split_first_copy() else {
+                return (0, "absolute exhausted parts, but counts remain");
+            };
+            let parts_next: (Part, &[Part]) = if count_remaining_opt.is_some() {
+                (part_next, parts_rest)
+            } else {
+                // perfect match, need to nullify immediate next
+                match part_next {
                     Part::Unknown(part_count) => {
                         if let Some(part_count_reduced) =
                             part_count.get().checked_sub(1).and_then(NonZeroUsize::new)
                         {
                             (Part::Unknown(part_count_reduced), parts_rest)
                         } else {
-                            let parts_next = parts_rest.split_first_copy()
+                            let parts_next_split2 = parts_rest.split_first_copy()
                                 .expect
                                 ("duplicate branch as above (in count_remaining_opt = Some(None) case)");
-                            parts_next
+                            parts_next_split2
                         }
                     }
                     Part::Absolute(_) => {
@@ -486,10 +480,6 @@ mod analysis {
                                 "absolute perfect match, but need separator and immediate next is absolute",
                             );
                     }
-                },
-                (Some(parts_next), Some(_count_first_remaining)) => *parts_next,
-                (None, _existence_of_a_next_count) => {
-                    return (0, "absolute exhausted parts, but counts remain");
                 }
             };
 
