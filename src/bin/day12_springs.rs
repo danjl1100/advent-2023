@@ -52,9 +52,6 @@ impl Record {
         while let Some(segment) = Segment::new(&mut symbols)? {
             segments.push(segment);
         }
-        // TODO unclear how to functionalize this...
-        // let segments =
-        //     std::iter::repeat_with(|| Segment::new(symbols)).collect::<Result<Vec<_>, _>>()?;
 
         let Some(segments) = NonEmptyVec::new(segments) else {
             anyhow::bail!("empty segments")
@@ -237,38 +234,9 @@ impl std::fmt::Display for DebugParts {
 
 mod analysis {
     //! Privacy barrier for analysis-specific functions/types
-    use std::num::NonZeroUsize;
-
-    use advent_2023::nonempty::NonEmptyVec;
-
     use crate::{unsplit_to_vec, DebugParts, Part, Segment};
-
-    trait SplitFirstCopyOption<T: Copy> {
-        fn split_first_copy(&self) -> Option<(T, &[T])>;
-    }
-    impl<'a, T: Copy> SplitFirstCopyOption<T> for &'a [T] {
-        fn split_first_copy(&self) -> Option<(T, &[T])> {
-            self.split_first().map(|(&first, rest)| (first, rest))
-        }
-    }
-    trait SplitFirstCopy<T: Copy> {
-        fn split_first_copy(&self) -> (T, &[T]);
-    }
-    impl<T: Copy> SplitFirstCopy<T> for NonEmptyVec<T> {
-        fn split_first_copy(&self) -> (T, &[T]) {
-            let (&first, rest) = self.split_first();
-            (first, rest)
-        }
-    }
-
-    trait NonZeroCheckedSub<T>: Sized {
-        fn checked_sub(self, rhs: T) -> Option<Self>;
-    }
-    impl NonZeroCheckedSub<usize> for NonZeroUsize {
-        fn checked_sub(self, rhs: usize) -> Option<Self> {
-            self.get().checked_sub(rhs).and_then(Self::new)
-        }
-    }
+    use advent_2023::nonempty::NonEmptyVec;
+    use std::num::NonZeroUsize;
 
     impl Segment {
         pub(crate) fn count_possibilities(&self, expected_counts: &[NonZeroUsize]) -> usize {
@@ -279,13 +247,6 @@ mod analysis {
             };
 
             let parts_split = self.0.split_first_copy();
-
-            // SegmentAnalysis {
-            //     parts_split,
-            //     counts_split,
-            //     force_left_align: None,
-            //     debug_indent: 0,
-            // }
             SegmentAnalysis::new(parts_split, counts_split).count()
         }
     }
@@ -353,7 +314,7 @@ mod analysis {
             } = self;
 
             print!("{:width$}", "", width = debug_indent);
-            print!("* count_possibilities_slice");
+            print!("* count");
             print!("(parts: ({part_first:?}, {parts_rest:?})");
             print!(", counts: ({count_first:?}, {counts_rest:?})");
             print!(
@@ -397,15 +358,18 @@ mod analysis {
             let expected = count_first.get();
             match part_first {
                 // Absoulute - must match completely
-                Part::Absolute(count_part) if count_part == expected => {
-                    (1, "absolute perfect match")
+                Part::Absolute(count_part) => {
+                    if count_part == expected {
+                        (1, "absolute perfect match")
+                    } else {
+                        (0, "absolute NOT perfect match")
+                    }
                 }
-                Part::Absolute(_) => (0, "absolute NOT perfect match"),
                 // Unknown - possible to slide around
                 Part::Unknown(count_part) => {
                     if let Some(blank_area) = count_part.checked_sub(expected) {
                         if force_left_align.is_some() {
-                            (1, "unknowns left-aligned handles remaining expected")
+                            (1, "unknowns left-aligned covers remaining expected")
                         } else {
                             // blanked area can slide, with one side containing: 0..=blank_area
                             (blank_area + 1, "unknowns slide")
@@ -420,26 +384,37 @@ mod analysis {
         fn case_absolute(&self, count_part_absolute: usize) -> (usize, &'static str) {
             // anchored by first
             //
-            // For a match, `part_first` MUST fully contain `count_first`
-            let counts_next = if self.count_first.get() == count_part_absolute {
-                // Pop count
-                if let Some(counts_next) = self.counts_rest.split_first_copy() {
-                    counts_next
-                } else {
-                    // verify remainder is all Unknowns
-                    let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
-                    return if possible {
-                        (1, "absolute exhausted count, remainder is nullable")
+            // For a match, the absolute part MUST fully contain `count_first`
+            let count_remaining_opt = self
+                .count_first
+                .get()
+                .checked_sub(count_part_absolute)
+                .map(NonZeroUsize::new);
+            let counts_next = match count_remaining_opt {
+                Some(None) => {
+                    // if self.count_first.get() == count_part_absolute {
+                    // Pop count
+                    if let Some(counts_next) = self.counts_rest.split_first_copy() {
+                        counts_next
                     } else {
-                        (0, "absolute exhausted count, but remainder is not nullable")
-                    };
+                        // verify remainder is all Unknowns
+                        let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
+                        return if possible {
+                            (1, "absolute exhausted count, remainder is nullable")
+                        } else {
+                            (0, "absolute exhausted count, but remainder is not nullable")
+                        };
+                    }
                 }
-            } else if let Some(count_remaining) = self.count_first.checked_sub(count_part_absolute)
-            {
-                (count_remaining, self.counts_rest)
-            } else {
-                // REJECT, Part::Absolute larger than count_first
-                return (0, "absolute too long for current count");
+                Some(Some(count_remaining)) => {
+                    // else if let Some(count_remaining) = self.count_first.checked_sub(count_part_absolute)
+                    (count_remaining, self.counts_rest)
+                }
+                None => {
+                    // else
+                    // REJECT, Part::Absolute larger than count_first
+                    return (0, "absolute too long for current count");
+                }
             };
 
             let Some(parts_next) = self.parts_rest.split_first_copy() else {
@@ -458,21 +433,6 @@ mod analysis {
             (result, "recurse")
         }
         fn case_unknown(&self, count_part_unknown: usize) -> (usize, &'static str) {
-            // if count_first == 0 {
-            //     let Some(parts_next) = parts_rest.split_first_copy() else {
-            //         // TODO
-            //         todo!()
-            //     };
-
-            //     self.recurse(
-            //         "part pop_front",
-            //         parts_next,
-            //         (count_first, counts_rest),
-            //         force_left_align,
-            //     )
-            //     .count();
-            // } else
-
             if self.force_left_align.is_some()
                 && self.counts_rest.is_empty()
                 && count_part_unknown >= self.count_first.get()
@@ -480,13 +440,9 @@ mod analysis {
             {
                 return (
                     0,
-                    "unknowns longer than final count, but force-left-align with remainder not nullable",
+                    "unknowns longer than final count, but remainder not nullable and force_left_align",
                 );
             }
-            // if self.counts_rest.is_empty() && self.force_left_align.is_some() {
-            //     return (0, "questionable... not sure why");
-            // }
-            // TODO resume FUNCTION-ification here, to clean up and also pretty-print results for ALL paths
 
             // FIXME avoid N-based recurse for Unknowns...
             // For now, input is not excessively long so recurse for each question-mark choice
@@ -513,38 +469,49 @@ mod analysis {
                 parts_next
             };
 
-            // split into two possibilities
-            let unknown_on = if self.count_first.get() == 1 {
-                if let Some(counts_next) = self.counts_rest.split_first_copy() {
-                    self.recurse(
-                        "assume Unknown = ON, reduce count",
-                        parts_reduced,
-                        counts_next,
-                        Some(ForceLeftAlign),
-                    )
-                    .count()
-                } else {
-                    // verify remainder is all Unknowns
-                    let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
-                    if possible {
-                        // unknown exhasted count, remainder is nullable
-                        1
-                    } else {
-                        // unknown exhasted count, but remainder is not nullable
+            // split into two possibilities (ON, OFF)
+            let unknown_on = {
+                let count_reduced_opt =
+                    self.count_first.get().checked_sub(1).map(NonZeroUsize::new);
+                match count_reduced_opt {
+                    Some(None) => {
+                        // if self.count_first.get() == 1
+                        if let Some(counts_next) = self.counts_rest.split_first_copy() {
+                            self.recurse(
+                                "assume Unknown = ON, reduce count",
+                                parts_reduced,
+                                counts_next,
+                                Some(ForceLeftAlign),
+                            )
+                            .count()
+                        } else {
+                            // verify remainder is all Unknowns
+                            let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
+                            if possible {
+                                // unknown exhasted count, remainder is nullable
+                                1
+                            } else {
+                                // unknown exhasted count, but remainder is not nullable
+                                0
+                            }
+                        }
+                    }
+                    Some(Some(count_reduced)) => {
+                        // else if let Some(count_reduced) = self.count_first.checked_sub(1)
+                        self.recurse(
+                            "assume Unknown = ON, reduce count",
+                            parts_reduced,
+                            (count_reduced, self.counts_rest),
+                            Some(ForceLeftAlign),
+                        )
+                        .count()
+                    }
+                    None => {
+                        //else
+                        // cannot reduce count, impossible for ON
                         0
                     }
                 }
-            } else if let Some(count_reduced) = self.count_first.checked_sub(1) {
-                self.recurse(
-                    "assume Unknown = ON, reduce count",
-                    parts_reduced,
-                    (count_reduced, self.counts_rest),
-                    Some(ForceLeftAlign),
-                )
-                .count()
-            } else {
-                // cannot reduce count, impossible for ON
-                0
             };
             let unknown_off = if self.force_left_align.is_some() {
                 // cannot assume off, forced left align
@@ -566,15 +533,32 @@ mod analysis {
 
     #[derive(Clone, Copy, Debug)]
     struct ForceLeftAlign;
+
+    // Convenience functions (as traits, for foreign types)
+    trait SplitFirstCopyOption<T: Copy> {
+        fn split_first_copy(&self) -> Option<(T, &[T])>;
+    }
+    impl<'a, T: Copy> SplitFirstCopyOption<T> for &'a [T] {
+        fn split_first_copy(&self) -> Option<(T, &[T])> {
+            self.split_first().map(|(&first, rest)| (first, rest))
+        }
+    }
+    trait SplitFirstCopy<T: Copy> {
+        fn split_first_copy(&self) -> (T, &[T]);
+    }
+    impl<T: Copy> SplitFirstCopy<T> for NonEmptyVec<T> {
+        fn split_first_copy(&self) -> (T, &[T]) {
+            let (&first, rest) = self.split_first();
+            (first, rest)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
-
-    use advent_2023::vec_nonempty;
-
     use crate::{Part, Record, Segment};
+    use advent_2023::vec_nonempty;
+    use std::num::NonZeroUsize;
 
     #[test]
     fn parse_segment() {
