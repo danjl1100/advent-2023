@@ -219,9 +219,21 @@ impl std::ops::Add for Part {
 }
 impl std::fmt::Debug for Part {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Part::Absolute(count) => write!(f, "#x{count}"),
-            Part::Unknown(count) => write!(f, "?x{count}"),
+        match *self {
+            Part::Absolute(count) => {
+                if count.get() == 1 {
+                    write!(f, "#")
+                } else {
+                    write!(f, "#x{count}")
+                }
+            }
+            Part::Unknown(count) => {
+                if count.get() == 1 {
+                    write!(f, "?")
+                } else {
+                    write!(f, "?x{count}")
+                }
+            }
         }
     }
 }
@@ -414,40 +426,71 @@ mod analysis {
             // anchored by first
             //
             // For a match, the absolute part MUST fully contain `count_first`
-            let count_remaining_opt = self
+            let count_remaining_opt_opt = self
                 .count_first
                 .get()
                 .checked_sub(count_part_absolute.get())
                 .map(NonZeroUsize::new);
-            let counts_next = match count_remaining_opt {
-                Some(None) => {
-                    // if self.count_first.get() == count_part_absolute {
-                    // Pop count
-                    if let Some(counts_next) = self.counts_rest.split_first_copy() {
-                        counts_next
-                    } else {
-                        // verify remainder is all Unknowns
-                        let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
-                        return if possible {
-                            (1, "absolute exhausted count, remainder is nullable")
-                        } else {
-                            (0, "absolute exhausted count, but remainder is not nullable")
+            let ((counts_next, new_force_left_align), count_remaining_opt) =
+                match count_remaining_opt_opt {
+                    Some(count_remaining_opt @ None) => {
+                        // if self.count_first.get() == count_part_absolute
+                        // Pop count
+                        let Some(counts_next) = self.counts_rest.split_first_copy() else {
+                            // verify remainder is all Unknowns
+                            let possible = self.parts_rest.iter().copied().all(Part::is_nullable);
+                            return if possible {
+                                (1, "absolute exhausted count, remainder is nullable")
+                            } else {
+                                (0, "absolute exhausted count, but remainder is not nullable")
+                            };
                         };
+                        ((counts_next, None), count_remaining_opt)
                     }
-                }
-                Some(Some(count_remaining)) => {
-                    // else if let Some(count_remaining) = self.count_first.checked_sub(count_part_absolute)
-                    (count_remaining, self.counts_rest)
-                }
-                None => {
-                    // else
-                    // REJECT, Part::Absolute larger than count_first
-                    return (0, "absolute too long for current count");
-                }
-            };
+                    Some(count_remaining_opt @ Some(count_remaining)) => {
+                        // else if let Some(count_remaining) = self.count_first.checked_sub(count_part_absolute)
+                        (
+                            ((count_remaining, self.counts_rest), Some(ForceLeftAlign)),
+                            count_remaining_opt,
+                        )
+                    }
+                    None => {
+                        // else
+                        // REJECT, Part::Absolute larger than count_first
+                        return (0, "absolute too long for current count");
+                    }
+                };
 
-            let Some(parts_next) = self.parts_rest.split_first_copy() else {
-                return (0, "absolute exhausted parts, but counts remain");
+            let parts_rest_split_opt = self.parts_rest.split_first_copy();
+            let parts_next: (Part, &[Part]) = match (
+                parts_rest_split_opt.as_ref(),
+                count_remaining_opt,
+            ) {
+                (Some((part_next, parts_rest)), None) => match part_next {
+                    // perfect match, need to nullify immediate next
+                    Part::Unknown(part_count) => {
+                        if let Some(part_count_reduced) =
+                            part_count.get().checked_sub(1).and_then(NonZeroUsize::new)
+                        {
+                            (Part::Unknown(part_count_reduced), parts_rest)
+                        } else {
+                            let parts_next = parts_rest.split_first_copy()
+                                .expect
+                                ("duplicate branch as above (in count_remaining_opt = Some(None) case)");
+                            parts_next
+                        }
+                    }
+                    Part::Absolute(_) => {
+                        return (
+                                0,
+                                "absolute perfect match, but need separator and immediate next is absolute",
+                            );
+                    }
+                },
+                (Some(parts_next), Some(_count_first_remaining)) => *parts_next,
+                (None, _existence_of_a_next_count) => {
+                    return (0, "absolute exhausted parts, but counts remain");
+                }
             };
 
             let result = self
@@ -455,7 +498,7 @@ mod analysis {
                     "part pop_front, count reduced",
                     parts_next,
                     counts_next,
-                    Some(ForceLeftAlign),
+                    new_force_left_align,
                 )
                 .count();
             (result, "recurse")
@@ -481,7 +524,7 @@ mod analysis {
                 .map(NonZeroUsize::new);
             let parts_reduced = match part_reduced_opt {
                 Some(Some(part_reduced)) => {
-                    // if let Some(part_reduced) = count_part_unknown.checked_sub(1) {
+                    // if let Some(part_reduced) = count_part_unknown.checked_sub(1)
                     let part_reduced = Part::Unknown(part_reduced);
                     // -1 to first
                     (part_reduced, self.parts_rest)
@@ -559,13 +602,13 @@ mod analysis {
                     None => {
                         //else
                         // cannot reduce count, impossible for ON
-                        0
+                        dbg!(0)
                     }
                 }
             };
             let unknown_off = if self.force_left_align.is_some() {
                 // cannot assume off, forced left align
-                0
+                dbg!(0)
             } else {
                 // let counts_next = counts_rest.split_first_copy().unwrap_or((0, &[]));
                 self.recurse(
@@ -606,7 +649,7 @@ mod analysis {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Part, Record, Segment};
+    use crate::{sum_counts, Part, Record, Segment};
     use advent_2023::vec_nonempty;
     use std::num::NonZeroUsize;
 
@@ -796,7 +839,7 @@ mod tests {
         test_record_count("???????? 1,1,1,1", 2 + 3);
         // 1. #.#.#.#.#.
         // 2. .#.#.#.#.#
-        // --
+        // ---
         // 3. #..#.#.#.#
         // 4. #.#..#.#.#
         // 5. #.#.#..#.#
@@ -804,18 +847,85 @@ mod tests {
         test_record_count("?????????? 1,1,1,1,1", 2 + 4);
     }
 
-    // TODO
-    //     #[test]
-    //     fn sample_input() {
-    //         let input = "???.### 1,1,3
-    // .??..??...?##. 1,1,3
-    // ?#?#?#?#?#?#?#? 1,3,1,6
-    // ????.#...#... 4,1,1
-    // ????.######..#####. 1,6,5
-    // ?###???????? 3,2,1
-    // ";
-    //         let records = Record::parse_lines(input).unwrap();
-    //         let sum = sum_counts(&records);
-    //         assert_eq!(sum, 21);
-    //     }
+    #[test]
+    fn sample_input_record_1() {
+        test_record_count("???.### 1,1,3", 1);
+    }
+
+    #[test]
+    fn sample_input_record_2() {
+        test_record_count(".??..??...?##. 1,1,3", 4);
+    }
+
+    #[test]
+    fn sample_input_record_3_pretest() {
+        //    #?#?#?
+        // 1. ######
+        test_record_count("#?#?#? 6", 1);
+    }
+    #[test]
+    fn sample_input_record_3_pretest_2() {
+        //    #?#?#?#?
+        // 1. #.######
+        test_record_count("#?#?#?#? 1,6", 1);
+    }
+    #[test]
+    fn sample_input_record_3_pretest_3() {
+        //    #?#?#?#?#?
+        // 1. #.#.######
+        test_record_count("#?#?#?#?#? 1,1,6", 1);
+    }
+    #[test]
+    fn sample_input_record_3() {
+        //    ?#?#?#?#?#?#?#?
+        // 1. .#.###.#.######
+        test_record_count("?#?#?#?#?#?#?#? 1,3,1,6", 1);
+    }
+
+    #[test]
+    fn sample_input_record_4() {
+        test_record_count("????.#...#... 4,1,1", 1);
+    }
+
+    #[test]
+    fn sample_input_record_5() {
+        test_record_count("????.######..#####. 1,6,5", 4);
+    }
+
+    #[test]
+    fn sample_input_record_6_pretest() {
+        // 1. ##.#...
+        // 2. .##.#..
+        // 3. ..##.#.
+        // 4. ...##.#
+        // ---
+        // 5. ##..#..
+        // 6. .##..#.
+        // 7. ..##..#
+        // ---
+        // 8. ##...#.
+        // 9. .##...#
+        // ---
+        // 10 ##....#
+        test_record_count("??????? 2,1", 10)
+    }
+
+    #[test]
+    fn sample_input_record_6() {
+        test_record_count("?###???????? 3,2,1", 10);
+    }
+
+    #[test]
+    fn sample_input() {
+        let input = "???.### 1,1,3
+.??..??...?##. 1,1,3
+?#?#?#?#?#?#?#? 1,3,1,6
+????.#...#... 4,1,1
+????.######..#####. 1,6,5
+?###???????? 3,2,1
+";
+        let records = Record::parse_lines(input).unwrap();
+        let sum = sum_counts(&records);
+        assert_eq!(sum, 21);
+    }
 }
