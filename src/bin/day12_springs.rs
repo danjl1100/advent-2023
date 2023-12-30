@@ -1,8 +1,8 @@
 use std::{num::NonZeroUsize, time::Instant};
 
-use crate::day12_springs::{
+pub use crate::day12_springs::{
     record::Record,
-    segment::{DebugParts, Part, Segment},
+    segment::{DebugParts, Part, Segment, SegmentBuilder},
 };
 
 mod day12_springs {

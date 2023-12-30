@@ -334,6 +334,10 @@ pub mod nonempty {
             self.0.split_first().expect("nonempty")
         }
 
+        pub fn last(&self) -> &T {
+            self.0.last().expect("nonempty")
+        }
+
         pub fn into_split_last(mut self) -> (Vec<T>, T) {
             let last = self.0.pop().expect("nonempty");
             (self.0, last)

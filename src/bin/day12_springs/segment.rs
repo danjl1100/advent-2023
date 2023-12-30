@@ -7,18 +7,24 @@ use crate::ONE;
 #[derive(Clone, PartialEq, Eq)]
 pub struct Segment(pub NonEmptyVec<Part>);
 
+type SegmentAndMeta = (Option<LeadingSep>, Segment, Option<TrailingSep>);
+
 impl Segment {
     #[allow(unused)] // for tests
-    pub fn new_from_str(symbols: &str) -> anyhow::Result<Option<Self>> {
+    pub fn new_from_str(symbols: &str) -> anyhow::Result<Option<SegmentAndMeta>> {
         let symbols = &mut symbols.chars().peekable();
         Self::new(symbols)
     }
     pub fn new(
         symbols: &mut std::iter::Peekable<impl Iterator<Item = char>>,
-    ) -> anyhow::Result<Option<Self>> {
+    ) -> anyhow::Result<Option<SegmentAndMeta>> {
+        let mut leading = None;
+        let mut trailing = None;
+
         // ignore duplicate separators
         while let Some('.') = symbols.peek() {
             let _ = symbols.next();
+            leading = Some(LeadingSep);
         }
 
         let mut builder = SegmentBuilder::default();
@@ -28,6 +34,7 @@ impl Segment {
                 '#' => Part::Absolute(ONE),
                 '?' => Part::Unknown(ONE),
                 '.' => {
+                    trailing = Some(TrailingSep);
                     break;
                 }
                 extra => {
@@ -36,16 +43,26 @@ impl Segment {
             };
             builder.push(new);
         }
-        Ok(builder.finish())
+        Ok(builder.finish().map(|this| (leading, this, trailing)))
     }
     pub fn is_nullable(&self) -> bool {
-        self.0.iter().copied().all(Part::is_nullable)
+        self.iter().all(Part::is_nullable)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Part> + '_ {
+        self.0.iter().copied()
     }
 
     pub fn into_builder(self) -> SegmentBuilder {
         self.into()
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct LeadingSep;
+
+#[derive(Clone, Copy, Debug)]
+pub struct TrailingSep;
 
 #[derive(Default)]
 pub struct SegmentBuilder {
@@ -84,6 +101,22 @@ impl From<Segment> for SegmentBuilder {
             parts,
             prev: Some(last),
         }
+    }
+}
+impl FromIterator<Part> for SegmentBuilder {
+    fn from_iter<T: IntoIterator<Item = Part>>(iter: T) -> Self {
+        let mut builder = SegmentBuilder::default();
+        for part in iter {
+            builder.push(part);
+        }
+        builder
+    }
+}
+impl IntoIterator for Segment {
+    type Item = Part;
+    type IntoIter = <Vec<Part> as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 

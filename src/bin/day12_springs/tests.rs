@@ -1,31 +1,37 @@
-use crate::{Part, Record, Segment, FACTOR_5};
+use crate::{Part, Record, Segment};
 use advent_2023::vec_nonempty;
 use std::num::NonZeroUsize;
 
 macro_rules! vec_parts {
-        ($( $elem:ident ( $value:expr ) ),+ $(,)?) => {
-            vec_nonempty![ $( vec_parts![@elem $elem ( $value ) ] ),+ ]
+    ($( $elem:ident ( $value:expr ) ),+ $(,)?) => {
+        vec_nonempty![ $( vec_parts![@elem $elem ( $value ) ] ),+ ]
+    };
+    (@elem Absolute($value:expr)) => {{
+        const VALUE: NonZeroUsize = match NonZeroUsize::new($value) {
+            Some(v) => v,
+            None => [][0],
         };
-        (@elem Absolute($value:expr)) => {{
-            const VALUE: NonZeroUsize = match NonZeroUsize::new($value) {
-                Some(v) => v,
-                None => [][0],
-            };
-            Part::Absolute(VALUE)
-        }};
-        (@elem Unknown($value:expr)) => {{
-            const VALUE: NonZeroUsize = match NonZeroUsize::new($value) {
-                Some(v) => v,
-                None => [][0],
-            };
-            Part::Unknown(VALUE)
-        }};
-    }
+        Part::Absolute(VALUE)
+    }};
+    (@elem Unknown($value:expr)) => {{
+        const VALUE: NonZeroUsize = match NonZeroUsize::new($value) {
+            Some(v) => v,
+            None => [][0],
+        };
+        Part::Unknown(VALUE)
+    }};
+}
+
+mod record_unfold;
+
+mod sample_input;
+
+mod oddly_specific;
 
 #[test]
 fn parse_segment() {
     let symbols = ".......####??###.";
-    let segment = Segment::new_from_str(symbols)
+    let (_lead, segment, _trail) = Segment::new_from_str(symbols)
         .expect("characters valid")
         .expect("nonempty");
     assert_eq!(segment.0, vec_parts![Absolute(4), Unknown(2), Absolute(3)]);
@@ -36,7 +42,7 @@ fn parse_record() {
     let record = Record::new(line).unwrap();
     assert_eq!(
         record
-            .known_counts
+            .known_counts()
             .iter()
             .copied()
             .map(NonZeroUsize::get)
@@ -44,8 +50,8 @@ fn parse_record() {
         vec![1, 5, 222, 99]
     );
     assert_eq!(
-        record.segments,
-        vec_nonempty![
+        record.segments(),
+        &vec_nonempty![
             Segment(vec_parts![Absolute(1)]),
             Segment(vec_parts![Absolute(2)]),
             Segment(vec_parts![Absolute(1), Unknown(2)]),
@@ -54,122 +60,21 @@ fn parse_record() {
         ]
     );
 }
-
 #[test]
-fn record_unfold_leading_sep() {
-    let symbols = ".#";
-    let record = Record::new(&format!("{symbols} 1")).unwrap();
-    assert_eq!(
-        record
-            .known_counts
-            .iter()
-            .copied()
-            .map(NonZeroUsize::get)
-            .collect::<Vec<_>>(),
-        vec![1]
-    );
-    assert_eq!(
-        record.segments,
-        vec_nonempty![Segment(vec_parts![Absolute(1)])]
-    );
-
-    let unfolded = record.unfold(FACTOR_5);
-
-    assert_eq!(
-        unfolded
-            .known_counts
-            .iter()
-            .copied()
-            .map(NonZeroUsize::get)
-            .collect::<Vec<_>>(),
-        vec![1, 1, 1, 1, 1]
-    );
-    assert_eq!(
-        unfolded.segments,
-        vec_nonempty![
-            Segment(vec_parts![Absolute(1), Unknown(1)]),
-            Segment(vec_parts![Absolute(1), Unknown(1)]),
-            Segment(vec_parts![Absolute(1), Unknown(1)]),
-            Segment(vec_parts![Absolute(1), Unknown(1)]),
-            Segment(vec_parts![Absolute(1)]),
-        ]
-    );
-
-    let expected = Record::new(&format!(
-        "{symbols}?{symbols}?{symbols}?{symbols}?{symbols} 1,1,1,1,1"
-    ))
-    .unwrap();
-    assert_eq!(unfolded, expected);
-}
-
-#[test]
-fn record_unfold_trailing_sep() {
-    let symbols = "#.";
-    let record = Record::new(&format!("{symbols} 1")).unwrap();
-    assert_eq!(
-        record.segments,
-        vec_nonempty![Segment(vec_parts![Absolute(1)])]
-    );
-
-    let unfolded = record.unfold(FACTOR_5);
-
-    assert_eq!(
-        unfolded.segments,
-        vec_nonempty![
-            Segment(vec_parts![Absolute(1)]),
-            //
-            Segment(vec_parts![Unknown(1), Absolute(1)]),
-            Segment(vec_parts![Unknown(1), Absolute(1)]),
-            Segment(vec_parts![Unknown(1), Absolute(1)]),
-            Segment(vec_parts![Unknown(1), Absolute(1)]),
-        ]
-    );
-
-    let expected = Record::new(&format!(
-        "{symbols}?{symbols}?{symbols}?{symbols}?{symbols} 1,1,1,1,1"
-    ))
-    .unwrap();
-    assert_eq!(unfolded, expected);
-}
-#[test]
-fn record_unfold_no_sep() {
-    let symbols = "#";
-    let record = Record::new(&format!("{symbols} 1")).unwrap();
-    assert_eq!(
-        record.segments,
-        vec_nonempty![Segment(vec_parts![Absolute(1)])]
-    );
-
-    let unfolded = record.unfold(FACTOR_5);
-
-    assert_eq!(
-        unfolded.segments,
-        vec_nonempty![Segment(vec_parts![
-            Absolute(1),
-            Unknown(1),
-            //
-            Absolute(1),
-            Unknown(1),
-            //
-            Absolute(1),
-            Unknown(1),
-            //
-            Absolute(1),
-            Unknown(1),
-            //
-            Absolute(1),
-        ]),]
-    );
-
-    let expected = Record::new(&format!(
-        "{symbols}?{symbols}?{symbols}?{symbols}?{symbols} 1,1,1,1,1"
-    ))
-    .unwrap();
-    assert_eq!(unfolded, expected);
+fn parse_record_separators() {
+    macro_rules! test {
+        ($str:expr, $expected:expr) => {
+            assert_eq!(Record::new($str).unwrap().separators(), $expected);
+        };
+    }
+    test!("#.##.?? 1", (false, false));
+    test!(".#.##.?? 1", (true, false));
+    test!("#.##.??. 1", (false, true));
+    test!(".#.##.??. 1", (true, true));
 }
 
 fn test_segment_count(symbols: &str, counts: &[usize], expected: usize) {
-    let segment = Segment::new_from_str(symbols)
+    let (_lead, segment, _trail) = Segment::new_from_str(symbols)
         .expect("valid line")
         .expect("nonempty symbols input");
     println!(
@@ -312,278 +217,4 @@ fn sample_record_sliding_multicount() {
     // 5. #.#.#..#.#
     // 6. #.#.#.#..#
     test_record_count("?????????? 1,1,1,1,1", 2 + 4);
-}
-
-mod sample_input {
-    use crate::{day12_springs::record::Record, sum_counts, FACTOR_5};
-
-    fn test_record_counts(line: &str, (expected, expect_unfolded): (usize, usize)) {
-        let record = Record::new(line).expect("valid line");
-        let count = record.count_possibilities();
-        assert_eq!(count, expected, "record (prior to unfold)");
-
-        let record_unfolded = record.unfold(FACTOR_5);
-        let count_unfolded = record_unfolded.count_possibilities();
-        assert_eq!(count_unfolded, expect_unfolded, "unfolded record");
-    }
-
-    #[test]
-    fn sample_input_record_1() {
-        test_record_counts("???.### 1,1,3", (1, 1));
-    }
-
-    #[test]
-    fn sample_input_record_2() {
-        test_record_counts(".??..??...?##. 1,1,3", (4, 16384));
-    }
-
-    #[test]
-    fn sample_input_record_3_pretest() {
-        //    #?#?#?
-        // 1. ######
-        test_record_counts("#?#?#? 6", (1, 1));
-        // 4 of the 5 copies are free to shift right by 1, with the added Unknown
-        test_record_counts("?#?#?# 6", (1, 16));
-    }
-    #[test]
-    fn sample_input_record_3_pretest_2() {
-        //    #?#?#?#?
-        // 1. #.######
-        test_record_counts("#?#?#?#? 1,6", (1, 1));
-    }
-    #[test]
-    fn sample_input_record_3_pretest_3() {
-        //    #?#?#?#?#?
-        // 1. #.#.######
-        test_record_counts("#?#?#?#?#? 1,1,6", (1, 1));
-    }
-    #[test]
-    fn sample_input_record_3() {
-        //    ?#?#?#?#?#?#?#?
-        // 1. .#.###.#.######
-        test_record_counts("?#?#?#?#?#?#?#? 1,3,1,6", (1, 1));
-    }
-
-    #[test]
-    fn sample_input_record_4() {
-        test_record_counts("????.#...#... 4,1,1", (1, 1));
-    }
-
-    #[test]
-    fn sample_input_record_5() {
-        super::test_record_count("????.######..#####. 1,6,5", 4);
-        let expected = todo!();
-        test_record_counts("????.######..#####. 1,6,5", (4, expected));
-    }
-
-    #[test]
-    fn sample_input_record_6_pretest() {
-        // 1. ##.#...
-        // 2. .##.#..
-        // 3. ..##.#.
-        // 4. ...##.#
-        // ---
-        // 5. ##..#..
-        // 6. .##..#.
-        // 7. ..##..#
-        // ---
-        // 8. ##...#.
-        // 9. .##...#
-        // ---
-        // 10 ##....#
-        super::test_record_count("??????? 2,1", 10);
-        let expected = todo!();
-        test_record_counts("??????? 2,1", (10, expected));
-    }
-
-    #[test]
-    fn sample_input_record_6() {
-        super::test_record_count("?###???????? 3,2,1", 10);
-        let expected = todo!();
-        test_record_counts("?###???????? 3,2,1", (10, expected));
-    }
-
-    #[test]
-    fn sample_input() {
-        let input = "???.### 1,1,3
-.??..??...?##. 1,1,3
-?#?#?#?#?#?#?#? 1,3,1,6
-????.#...#... 4,1,1
-????.######..#####. 1,6,5
-?###???????? 3,2,1
-";
-        let records = Record::parse_lines(input).unwrap();
-        let sum = sum_counts(&records);
-        assert_eq!(sum, 21);
-    }
-
-    //     TODO
-    //     #[test]
-    //     fn sample_input_unfolded() {
-    //         let input = "???.### 1,1,3
-    // .??..??...?##. 1,1,3
-    // ?#?#?#?#?#?#?#? 1,3,1,6
-    // ????.#...#... 4,1,1
-    // ????.######..#####. 1,6,5
-    // ?###???????? 3,2,1
-    // ";
-    //         let records = Record::parse_lines(input).unwrap();
-    //         let unfolded = records
-    //             .into_iter()
-    //             .map(|record| record.unfold(FACTOR_5))
-    //             .collect::<Vec<_>>();
-    //         let sum = sum_counts(&unfolded);
-    //         assert_eq!(sum, 525152);
-    //     }
-}
-
-mod oddly_specific_tests {
-    //! line numbers inspired by: `echo $((1+RANDOM%1000))`
-
-    use super::test_record_count;
-
-    #[test]
-    fn test_record_38() {
-        //     ?###.?#?#????#????? 4,1,1,1,3,2
-        //  0. ####..#.#.
-        //
-        //  Reduces to:
-        //     ???#????? 1,3,2
-        //  1. #.###.##.
-        //  2. .#.###.##
-        //  ---
-        //  3. #..###.##
-        //  ---
-        //     ???#????? 1,3,2
-        //  4. #.###..##
-        //
-        test_record_count("?###.?#?#????#????? 4,1,1,1,3,2", 4);
-    }
-    #[test]
-    fn test_record_99() {
-        //     ???#????? 1,3
-        //  1. #.###....
-        //  2. .#.###...
-        //  ---
-        //  3. #..###...
-        //  ---
-        //  4. ...#.###.
-        //  5. ...#..###
-        test_record_count(".???#????? 1,3", 5);
-    }
-
-    #[test]
-    fn test_record_112_precheck_1() {
-        //     ???.??? 2,1
-        //  1. ##..#..
-        //  2. ##...#.
-        //  3. ##....#
-        // ---    .
-        //  4. .##.#..
-        //  5. .##..#.
-        //  6. .##...#
-        test_record_count("???.??? 2,1", 6);
-    }
-    #[test]
-    fn test_record_112_precheck_2() {
-        //     ???#?.??? 2,2
-        //  1. ##.##....
-        //  2. ..##..##.
-        //  3. ..##...##
-        //  4. ...##.##.
-        //  5. ...##..##
-        test_record_count("???#?.??? 2,2", 5);
-    }
-    #[test]
-    fn test_record_112() {
-        //     ???#?.???.??? 2,2,1
-        //  1. ##.##.#......
-        //  2. ##.##..#.....
-        //  3. ##.##...#....
-        //  4. ##.##.....#..
-        //  5. ##.##......#.
-        //  6. ##.##.......#
-        //  ---   # .   .
-        //     ???#?.???.??? 2,2,1
-        //  7. ..##..##..#..
-        //  8. ..##..##...#.
-        //  9. ..##..##....#
-        // ---    # .   .
-        // 10. ..##...##.#..
-        // 11. ..##...##..#.
-        // 12. ..##...##...#
-        // ---    # .   .
-        // 13. ...##.##..#..
-        // 14. ...##.##...#.
-        // 15. ...##.##....#
-        // ---    # .   .
-        // 16. ...##..##.#..
-        // 17. ...##..##..#.
-        // 18. ...##..##...#
-        // ---    # .   .
-        test_record_count("???#?.???.??? 2,2,1", 18);
-    }
-
-    #[test]
-    fn test_record_140() {
-        //     #??#????#??#?##??? 1,1,1,1,6,1
-        //  0. #..#.
-        //  ---
-        //     ???#??#?##??? 1,1,6,1
-        //  1. #..#.######.#
-        //  2. .#.#.######.#
-        test_record_count("#??#????#??#?##??? 1,1,1,1,6,1", 2);
-    }
-    #[test]
-    fn test_record_434() {
-        //     ???.??? 1,1,1
-        //  1. #.#.#..
-        //  2. #.#..#.
-        //  3. #.#...#
-        //  ---
-        //  4. #...#.#
-        //  5. .#..#.#
-        //  6. ..#.#.#
-        test_record_count(".???.???.. 1,1,1", 6);
-    }
-    #[test]
-    fn test_record_506() {
-        //     ??###????#????? 1,8,2
-        //  1. #.########.##..
-        //  2. #.########..##.
-        //  3. #.########...##
-        test_record_count("??###????#????? 1,8,2", 3);
-    }
-
-    #[test]
-    fn test_record_951() {
-        //     ???.????#????????? 1,7,5
-        //  1. #...#######.#####.
-        //  2. .#..#######.#####.
-        //  3. ..#.#######.#####.
-        //  ---
-        //  4. #....#######.#####
-        //  5. .#...#######.#####
-        //  6. ..#..#######.#####
-        //  ---
-        //  7. #...#######..#####
-        //  8. .#..#######..#####
-        //  9. ..#.#######..#####
-        //  ---
-        test_record_count("???.????#?????????. 1,7,5", 9);
-    }
-    #[test]
-    fn test_record_952_precheck_1() {
-        //     ?.#?.?#? 1,2
-        //  1. ..#..##.
-        //  2. ..#...##
-        test_record_count("?.#?.?#? 1,2", 2);
-    }
-    #[test]
-    fn test_record_952() {
-        //     ?.?.#?.?#? 1,2
-        //  1. ....#..##.
-        //  2. ....#...##
-        test_record_count("?.?.#?.?#? 1,2", 2);
-    }
 }

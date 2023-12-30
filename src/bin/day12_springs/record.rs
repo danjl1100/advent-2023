@@ -1,16 +1,18 @@
-use advent_2023::nonempty::NonEmptyVec;
+use advent_2023::{nonempty::NonEmptyVec, vec_nonempty};
 use anyhow::Context;
 use std::num::NonZeroUsize;
 
-use crate::{Part, Segment, ONE};
+use crate::{Part, Segment, SegmentBuilder, ONE};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
-    pub segments: NonEmptyVec<Segment>,
-    pub known_counts: Vec<NonZeroUsize>,
-    // TODO track the (previously ignored) separators, for textual unfolding
-    // pub separator_leading: bool,
-    // pub separator_trailing: bool,
+    inner: RecordInner,
+    separators: (bool, bool),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RecordInner {
+    segments: NonEmptyVec<Segment>,
+    known_counts: Vec<NonZeroUsize>,
 }
 impl Record {
     pub fn parse_lines(input: &str) -> anyhow::Result<Vec<Self>> {
@@ -26,6 +28,8 @@ impl Record {
             anyhow::bail!("space delimiter not found")
         };
 
+        println!("------------------------------ symbols={symbols_str:?}");
+
         let known_counts = list_str
             .split(',')
             .map(|s| {
@@ -39,7 +43,16 @@ impl Record {
 
         let mut symbols = symbols_str.chars().peekable();
         let mut segments = vec![];
-        while let Some(segment) = Segment::new(&mut symbols)? {
+        let mut separator_leading = false;
+        let mut separator_trailing = false;
+
+        let mut first = Some(());
+        while let Some((leading, segment, trailing)) = Segment::new(&mut symbols)? {
+            if first.take().is_some() {
+                separator_leading = leading.is_some();
+            }
+            separator_trailing = trailing.is_some();
+
             segments.push(segment);
         }
 
@@ -47,52 +60,51 @@ impl Record {
             anyhow::bail!("empty segments")
         };
         Ok(Self {
-            segments,
-            known_counts,
+            inner: RecordInner {
+                segments,
+                known_counts,
+            },
+            separators: (separator_leading, separator_trailing),
         })
+    }
+    pub fn segments(&self) -> &NonEmptyVec<Segment> {
+        &self.inner.segments
+    }
+    pub fn known_counts(&self) -> &[NonZeroUsize] {
+        &self.inner.known_counts
+    }
+    pub fn separators(&self) -> (bool, bool) {
+        self.separators
     }
     pub fn unfold(self, factor: NonZeroUsize) -> Self {
         let Self {
-            segments,
-            known_counts,
+            inner:
+                RecordInner {
+                    segments,
+                    known_counts,
+                },
+            separators,
         } = self;
 
-        let segments_for_end = segments.clone();
-
-        let segments_for_begin_middle = {
-            let (mut segments, segment_last) = segments.into_split_last();
-            let segment_last = {
-                let mut segment_last = segment_last.into_builder();
-                segment_last.push(Part::Unknown(ONE));
-                segment_last
-                    .finish()
-                    .expect("nonempty, added to existing part")
-            };
-            segments.push(segment_last);
-
-            NonEmptyVec::new(segments).expect("nonempty, pushed segment_last")
-        };
-
-        let segments = std::iter::repeat_with(|| segments_for_begin_middle.clone().into_iter())
-            .take(factor.get() - 1)
-            .flatten()
-            .chain(segments_for_end.into_iter())
-            .collect();
-        let segments =
-            NonEmptyVec::new(segments).expect("nonempty, repeated nonempty vecs a bunch");
+        let segments = unfold_segments(segments, separators, factor);
 
         let known_counts = std::iter::repeat_with(|| known_counts.iter().copied())
             .take(factor.get())
             .flatten()
             .collect();
         Self {
-            segments,
-            known_counts,
+            inner: RecordInner {
+                segments,
+                known_counts,
+            },
+            separators,
         }
     }
     pub fn count_possibilities(&self) -> usize {
-        self.count_possibilities_inner(0)
+        self.inner.count_possibilities_inner(0)
     }
+}
+impl RecordInner {
     fn count_possibilities_inner(&self, debug_indent: usize) -> usize {
         print!("{:width$}", "", width = debug_indent);
         let debug_indent_next = debug_indent + 4;
@@ -155,5 +167,198 @@ impl Record {
         print!("{:width$}", "", width = debug_indent);
         println!("returning total {total_options}");
         total_options
+    }
+}
+
+fn unfold_segments(
+    segments: NonEmptyVec<Segment>,
+    separators: (bool, bool),
+    factor: NonZeroUsize,
+) -> NonEmptyVec<Segment> {
+    const SEPARATOR_UNKNOWN: Part = Part::Unknown(ONE);
+
+    let (segment_first, segments_rest) = segments.split_first();
+    match (segments_rest, separators) {
+        (&[], (false, false)) => {
+            // intersperse within the single segment
+            //
+            // e.g.  '#'  -> #?#?#?#?#
+            //
+            // strategy:
+            // - given record A single segment
+            // - output (A)(?A)(?A)(?A)(?A) single segment
+
+            let mut first = Some(());
+            // chain:   [seg], ?[seg], ?[seg], ?[seg], ?[seg]
+            let builder: SegmentBuilder = std::iter::repeat_with(|| {
+                let allow_sep = if first.take().is_some() { 0 } else { 1 };
+                std::iter::once(SEPARATOR_UNKNOWN)
+                    .take(allow_sep)
+                    .chain(segment_first.iter())
+            })
+            .take(factor.get())
+            .flatten()
+            .collect::<SegmentBuilder>();
+
+            let segment = builder
+                .finish()
+                .expect("nonempty segment, added to existing parts");
+
+            vec_nonempty![segment]
+        }
+        (_nonempty, (false, false)) => {
+            // separator creates "mid" segments that are double the input
+            //
+            // e.g. '#.#' -> #.#?#.#?#.#?#.#?#.#
+            //
+            // strategy:
+            // - given record A, B..B, C   (B..B may be empty, but guaranteed A != C)
+            // - calculate middle case C?A,
+            // - output (A, B..B), (C?A B..B), (C?A B..B), (C?A B..B), (C?A B..B), C
+
+            let (segment_last, segments_mid) = segments_rest
+                .split_last()
+                .expect("nonempty case, empty case handled above");
+
+            let combined_last_then_first = segment_last
+                .iter()
+                .chain(std::iter::once(SEPARATOR_UNKNOWN))
+                .chain(segment_first.iter())
+                .collect::<SegmentBuilder>()
+                .finish()
+                .expect("nonempty segment, added to existing parts");
+
+            let segments = std::iter::once(segment_first.clone())
+                .chain(segments_mid.iter().cloned())
+                .chain(
+                    std::iter::repeat_with(|| {
+                        std::iter::once(combined_last_then_first.clone())
+                            .chain(segments_mid.iter().cloned())
+                    })
+                    .take(factor.get() - 1)
+                    .flatten(),
+                )
+                .chain(std::iter::once(segment_last.clone()))
+                .collect();
+            NonEmptyVec::new(segments).expect("nonempty segment, added to existing parts")
+        }
+        (_, (true, true)) => {
+            // separator itself is an independent segment
+            //
+            // e.g. '.#.' -> .#.?.#.?.#.?.#.?.#.
+            //
+            // strategy:
+            // - given record A..Z
+            // - output (A..Z) ? (A..Z) ? (A..Z) ? (A..Z) ? (A..Z)
+
+            let segment_sep = std::iter::once(SEPARATOR_UNKNOWN)
+                .collect::<SegmentBuilder>()
+                .finish()
+                .expect("nonempty");
+
+            let mut first = Some(());
+            // chain: [segments], ? [segments], ...
+            let segments = std::iter::repeat_with(|| {
+                let allow_sep = if first.take().is_some() { 0 } else { 1 };
+                std::iter::once(segment_sep.clone())
+                    .take(allow_sep)
+                    .chain(segments.clone())
+            })
+            .take(factor.get())
+            .flatten()
+            .collect();
+            NonEmptyVec::new(segments).expect("nonempty, repeated nonempty vecs a bunch")
+        }
+        (_, (false, true) | (true, false)) => {
+            // separator "joins" on the ends of the existing segments
+            // combine sets: "start" / 3x "mid" / "end"
+            //
+            // e.g. '.#' -> .#?.#?.#?.#?.#
+            //
+            // e.g. '#.' -> #.?#.?#.?#.?#.
+            //
+            // special care for "first" and "last" modifications, which may refer to the same
+            // element (if sequence is empty)
+            //
+            // strategy:
+            // - given record A, B..B, C  (where B..B may be empty, or single element A = C)
+            //       - record has ONE of leading/trailing separators
+            // - calculate A' := ?A (if no leading separator) else A
+            // - calculate C' := C? (if no trailing separator) else C
+            // - output (A, B..B, C'), (A', B..B, C'), (A', B..B, C'), (A', B..B, C'), (A', B..B, C)
+
+            let (leading_has_sep, trailing_has_sep) = separators;
+            let add_sep_to_front = !leading_has_sep;
+            let add_sep_to_back = !trailing_has_sep;
+
+            let segment_last = segments.last();
+            let single_segment = segments_rest.is_empty();
+
+            let segment_first_modified_opt = add_sep_to_front.then(|| {
+                std::iter::once(SEPARATOR_UNKNOWN)
+                    .chain(segment_first.clone())
+                    .collect::<SegmentBuilder>()
+                    .finish()
+                    .expect("nonempty, added to segment")
+            });
+
+            let segment_last_modified_opt = add_sep_to_back.then(|| {
+                segment_last
+                    .iter()
+                    .chain(std::iter::once(SEPARATOR_UNKNOWN))
+                    .collect::<SegmentBuilder>()
+                    .finish()
+                    .expect("nonempty, added to segment")
+            });
+
+            let (segment_first_modified, segment_last_modified) = if single_segment {
+                let single_modified = segment_first_modified_opt
+                    .as_ref()
+                    .or(segment_last_modified_opt.as_ref())
+                    .expect("mutually exclusive case");
+                (single_modified, single_modified)
+            } else {
+                (
+                    segment_first_modified_opt.as_ref().unwrap_or(segment_first),
+                    segment_last_modified_opt.as_ref().unwrap_or(segment_last),
+                )
+            };
+
+            let (segment_first_for_start, segment_first_for_end) = if add_sep_to_back {
+                // modified back, so apply to start
+                (segment_first_modified, segment_first)
+            } else {
+                // modified front, so applyt to end
+                (segment_first, segment_first_modified)
+            };
+
+            let mut first = Some(());
+            let segments = std::iter::repeat_with(|| {
+                let first = if first.take().is_some() {
+                    segment_first_for_start
+                } else {
+                    segment_first_modified
+                };
+
+                std::iter::once(first.clone())
+                    .chain(
+                        segments_rest
+                            .iter()
+                            .take(segments_rest.len().saturating_sub(1))
+                            .cloned(),
+                    )
+                    .chain(
+                        std::iter::once_with(|| segment_last_modified.clone())
+                            .take(if segments_rest.is_empty() { 0 } else { 1 }),
+                    )
+            })
+            .take(factor.get() - 1)
+            .flatten()
+            .chain(
+                std::iter::once(segment_first_for_end.clone()).chain(segments_rest.iter().cloned()),
+            )
+            .collect();
+            NonEmptyVec::new(segments).expect("nonempty")
+        }
     }
 }
