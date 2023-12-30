@@ -4,9 +4,13 @@ use std::num::NonZeroUsize;
 
 use crate::{Part, Segment, ONE};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
     pub segments: NonEmptyVec<Segment>,
     pub known_counts: Vec<NonZeroUsize>,
+    // TODO track the (previously ignored) separators, for textual unfolding
+    // pub separator_leading: bool,
+    // pub separator_trailing: bool,
 }
 impl Record {
     pub fn parse_lines(input: &str) -> anyhow::Result<Vec<Self>> {
