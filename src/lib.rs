@@ -333,6 +333,16 @@ pub mod nonempty {
         pub fn split_first(&self) -> (&T, &[T]) {
             self.0.split_first().expect("nonempty")
         }
+
+        pub fn into_split_last(mut self) -> (Vec<T>, T) {
+            let last = self.0.pop().expect("nonempty");
+            (self.0, last)
+        }
+
+        pub fn map<U>(self, map_fn: impl Fn(T) -> U) -> NonEmptyVec<U> {
+            let vec = self.0.into_iter().map(map_fn).collect();
+            NonEmptyVec::new(vec).expect("nonempty after map")
+        }
     }
     // NOTE: Mutable access ONLY allowed as a slice
     impl<T> std::ops::Deref for NonEmptyVec<T> {
@@ -344,6 +354,13 @@ pub mod nonempty {
     impl<T> std::ops::DerefMut for NonEmptyVec<T> {
         fn deref_mut(&mut self) -> &mut Self::Target {
             &mut self.0[..]
+        }
+    }
+    impl<T> std::iter::IntoIterator for NonEmptyVec<T> {
+        type Item = T;
+        type IntoIter = <Vec<T> as std::iter::IntoIterator>::IntoIter;
+        fn into_iter(self) -> Self::IntoIter {
+            self.0.into_iter()
         }
     }
 

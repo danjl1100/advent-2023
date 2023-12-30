@@ -1,6 +1,6 @@
 use advent_2023::nonempty::NonEmptyVec;
 use anyhow::Context;
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Instant};
 
 fn main() -> anyhow::Result<()> {
     println!("hello, springy springs!");
@@ -8,15 +8,40 @@ fn main() -> anyhow::Result<()> {
     let input = advent_2023::get_input_string()?;
     let records = Record::parse_lines(&input)?;
 
-    let sum = sum_counts(&records);
-    println!("Sum of possibility counts: {sum}");
+    let records_unfolded = records
+        .into_iter()
+        .map(|record| record.unfold(FACTOR_5))
+        .collect::<Vec<_>>();
+
+    let sum = sum_counts(&records_unfolded);
+    eprintln!("Sum of possibility counts: {sum}");
 
     Ok(())
 }
 
 fn sum_counts(records: &[Record]) -> usize {
-    records.iter().map(Record::count_possibilities).sum()
+    records
+        .iter()
+        .enumerate()
+        .map(|(index, record)| {
+            let start = Instant::now();
+            let result = record.count_possibilities();
+            let elapsed = start.elapsed();
+            eprintln!("RECORD {index:03} CALCULATED IN {elapsed:?}");
+            result
+        })
+        .sum()
 }
+
+const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
+    Some(v) => v,
+    None => [][0],
+};
+
+const FACTOR_5: NonZeroUsize = match NonZeroUsize::new(5) {
+    Some(v) => v,
+    None => [][0],
+};
 
 struct Record {
     segments: NonEmptyVec<Segment>,
@@ -60,6 +85,45 @@ impl Record {
             segments,
             known_counts,
         })
+    }
+    fn unfold(self, factor: NonZeroUsize) -> Self {
+        let Self {
+            segments,
+            known_counts,
+        } = self;
+
+        let segments_for_end = segments.clone();
+
+        let segments_for_begin_middle = {
+            let (mut segments, segment_last) = segments.into_split_last();
+            let segment_last = {
+                let mut segment_last = segment_last.into_builder();
+                segment_last.push(Part::Unknown(ONE));
+                segment_last
+                    .finish()
+                    .expect("nonempty, added to existing part")
+            };
+            segments.push(segment_last);
+
+            NonEmptyVec::new(segments).expect("nonempty, pushed segment_last")
+        };
+
+        let segments = std::iter::repeat_with(|| segments_for_begin_middle.clone().into_iter())
+            .take(factor.get() - 1)
+            .flatten()
+            .chain(segments_for_end.into_iter())
+            .collect();
+        let segments =
+            NonEmptyVec::new(segments).expect("nonempty, repeated nonempty vecs a bunch");
+
+        let known_counts = std::iter::repeat_with(|| known_counts.iter().copied())
+            .take(factor.get())
+            .flatten()
+            .collect();
+        Self {
+            segments,
+            known_counts,
+        }
     }
     fn count_possibilities(&self) -> usize {
         self.count_possibilities_inner(0)
@@ -141,11 +205,6 @@ impl Segment {
     fn new(
         symbols: &mut std::iter::Peekable<impl Iterator<Item = char>>,
     ) -> anyhow::Result<Option<Self>> {
-        const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
-            Some(v) => v,
-            None => [][0],
-        };
-
         // ignore duplicate separators
         while let Some('.') = symbols.peek() {
             let _ = symbols.next();
@@ -170,6 +229,10 @@ impl Segment {
     }
     fn is_nullable(&self) -> bool {
         self.0.iter().copied().all(Part::is_nullable)
+    }
+
+    fn into_builder(self) -> SegmentBuilder {
+        self.into()
     }
 }
 
@@ -200,6 +263,16 @@ impl SegmentBuilder {
         }
 
         NonEmptyVec::new(parts).map(Segment)
+    }
+}
+impl From<Segment> for SegmentBuilder {
+    fn from(value: Segment) -> Self {
+        let Segment(parts) = value;
+        let (parts, last) = parts.into_split_last();
+        Self {
+            parts,
+            prev: Some(last),
+        }
     }
 }
 
@@ -617,7 +690,7 @@ mod analysis {
             };
             let unknown_off = if self.force_left_align.is_some() {
                 // cannot assume off, forced left align
-                dbg!(0)
+                0
             } else {
                 // let counts_next = counts_rest.split_first_copy().unwrap_or((0, &[]));
                 self.recurse(
@@ -658,7 +731,7 @@ mod analysis {
 
 #[cfg(test)]
 mod tests {
-    use crate::{sum_counts, Part, Record, Segment};
+    use crate::{sum_counts, Part, Record, Segment, FACTOR_5};
     use advent_2023::vec_nonempty;
     use std::num::NonZeroUsize;
 
@@ -711,6 +784,46 @@ mod tests {
                 Segment(vec_parts![Absolute(1), Unknown(2)]),
                 Segment(vec_parts![Unknown(2), Absolute(2)]),
                 Segment(vec_parts![Unknown(1)]),
+            ]
+        );
+    }
+
+    #[test]
+    fn record_unfold_simple() {
+        let record = Record::new(".# 1").unwrap();
+        assert_eq!(
+            record
+                .known_counts
+                .iter()
+                .copied()
+                .map(NonZeroUsize::get)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(
+            record.segments,
+            vec_nonempty![Segment(vec_parts![Absolute(1)]),]
+        );
+
+        let unfolded = record.unfold(FACTOR_5);
+
+        assert_eq!(
+            unfolded
+                .known_counts
+                .iter()
+                .copied()
+                .map(NonZeroUsize::get)
+                .collect::<Vec<_>>(),
+            vec![1, 1, 1, 1, 1]
+        );
+        assert_eq!(
+            unfolded.segments,
+            vec_nonempty![
+                Segment(vec_parts![Absolute(1), Unknown(1)]),
+                Segment(vec_parts![Absolute(1), Unknown(1)]),
+                Segment(vec_parts![Absolute(1), Unknown(1)]),
+                Segment(vec_parts![Absolute(1), Unknown(1)]),
+                Segment(vec_parts![Absolute(1)]),
             ]
         );
     }
@@ -942,6 +1055,25 @@ mod tests {
         let sum = sum_counts(&records);
         assert_eq!(sum, 21);
     }
+
+    //     TODO
+    //     #[test]
+    //     fn sample_input_unfolded() {
+    //         let input = "???.### 1,1,3
+    // .??..??...?##. 1,1,3
+    // ?#?#?#?#?#?#?#? 1,3,1,6
+    // ????.#...#... 4,1,1
+    // ????.######..#####. 1,6,5
+    // ?###???????? 3,2,1
+    // ";
+    //         let records = Record::parse_lines(input).unwrap();
+    //         let unfolded = records
+    //             .into_iter()
+    //             .map(|record| record.unfold(FACTOR_5))
+    //             .collect::<Vec<_>>();
+    //         let sum = sum_counts(&unfolded);
+    //         assert_eq!(sum, 525152);
+    //     }
 
     mod oddly_specific_tests {
         //! line numbers inspired by: `echo $((1+RANDOM%1000))`
