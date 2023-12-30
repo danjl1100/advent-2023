@@ -74,9 +74,10 @@ impl Record {
         );
         let (segment_first, segments_rest) = self.segments.split_first();
 
+        let start_count = if segment_first.is_nullable() { 0 } else { 1 };
+
         let mut total_options = 0;
-        for take_index in 0..self.known_counts.len() {
-            let take_count = take_index + 1;
+        for take_count in start_count..(self.known_counts.len() + 1) {
             let counts_taken = &self.known_counts[..take_count];
             let counts_rest = &self.known_counts[take_count..];
 
@@ -84,31 +85,46 @@ impl Record {
                 continue;
             }
 
-            let options = segment_first.count_possibilities(counts_taken, debug_indent_next);
-
-            if options != 0 {
-                if let Some(segments_rest) = NonEmptyVec::new(segments_rest.to_vec()) {
-                    let rest = Self {
-                        segments: segments_rest,
-                        known_counts: counts_rest.to_vec(),
-                    };
-                    let options_rest = rest.count_possibilities_inner(debug_indent_next);
-
-                    total_options += options * options_rest;
-                    println!("options += {options} * {options_rest} => {total_options}");
-                } else if counts_rest.is_empty() {
-                    // no more segments, and satisfied all counts
-                    total_options += options;
-                    println!("options += {options} (no more counts) => {total_options}");
-                } else {
-                    unreachable!(
-                        "ALREADY CHECKED FOR: options not allowed, segments will be empty while counts is nonempty"
-                    );
-                }
+            let options = if counts_taken.is_empty() {
+                None
             } else {
-                println!("options = 0 for that run");
+                let options = segment_first.count_possibilities(counts_taken, debug_indent_next);
+                Some(options)
+            };
+
+            match options {
+                Some(0) => {
+                    print!("{:width$}", "", width = debug_indent);
+                    println!("options = 0 for that run");
+                }
+                None | Some(_) => {
+                    if let Some(segments_rest) = NonEmptyVec::new(segments_rest.to_vec()) {
+                        let rest = Self {
+                            segments: segments_rest,
+                            known_counts: counts_rest.to_vec(),
+                        };
+                        let options_rest = rest.count_possibilities_inner(debug_indent_next);
+
+                        let options_num = options.unwrap_or(1);
+                        total_options += options_num * options_rest;
+                        print!("{:width$}", "", width = debug_indent);
+                        println!("options += {options_num} * {options_rest} => {total_options}");
+                    } else if counts_rest.is_empty() {
+                        // no more segments, and satisfied all counts
+                        let options_num = options.unwrap_or(0);
+                        total_options += options_num;
+                        print!("{:width$}", "", width = debug_indent);
+                        println!("options += {options_num} (no more counts) => {total_options}");
+                    } else {
+                        unreachable!(
+                            "ALREADY CHECKED FOR: options not allowed, segments will be empty while counts is nonempty"
+                        );
+                    }
+                }
             }
         }
+        print!("{:width$}", "", width = debug_indent);
+        println!("returning total {total_options}");
         total_options
     }
 }
@@ -151,6 +167,9 @@ impl Segment {
             builder.push(new);
         }
         Ok(builder.finish())
+    }
+    fn is_nullable(&self) -> bool {
+        self.0.iter().copied().all(Part::is_nullable)
     }
 }
 
@@ -468,9 +487,9 @@ mod analysis {
                         {
                             (Part::Unknown(part_count_reduced), parts_rest)
                         } else {
-                            let parts_next_split2 = parts_rest.split_first_copy()
-                                .expect
-                                ("duplicate branch as above (in count_remaining_opt = Some(None) case)");
+                            let Some(parts_next_split2) = parts_rest.split_first_copy() else {
+                                return (0, "absolute perfect match, but after consuming separator no parts remain to satify next counts");
+                            };
                             parts_next_split2
                         }
                     }
@@ -565,7 +584,7 @@ mod analysis {
                             } else {
                                 // the assumed "Unknown ON" completes the count,
                                 // but there remaining counts with no remaining part
-                                dbg!(0)
+                                0
                             }
                         } else {
                             // verify remainder is all Unknowns
@@ -794,6 +813,11 @@ mod tests {
         test_segment_count("??#??", &[5], 1);
     }
 
+    #[test]
+    fn segment_robust_1() {
+        test_segment_count("????#?#?", &[7, 2], 0);
+    }
+
     fn test_record_count(line: &str, expected: usize) {
         let record = Record::new(line).expect("valid line");
         let count = record.count_possibilities();
@@ -917,5 +941,77 @@ mod tests {
         let records = Record::parse_lines(input).unwrap();
         let sum = sum_counts(&records);
         assert_eq!(sum, 21);
+    }
+
+    #[test]
+    fn test_record_38() {
+        //     ?###.?#?#????#????? 4,1,1,1,3,2
+        //  0. ####..#.#.
+        //
+        //  Reduces to:
+        //     ???#????? 1,3,2
+        //  1. #.###.##.
+        //  2. .#.###.##
+        //  ---
+        //  3. #..###.##
+        //  ---
+        //     ???#????? 1,3,2
+        //  4. #.###..##
+        //
+        test_record_count("?###.?#?#????#????? 4,1,1,1,3,2", 4);
+    }
+    #[test]
+    fn test_record_99() {
+        //     ???#????? 1,3
+        //  1. #.###....
+        //  2. .#.###...
+        //  ---
+        //  3. #..###...
+        //  ---
+        //  4. ...#.###.
+        //  5. ...#..###
+        test_record_count(".???#????? 1,3", 5);
+    }
+    #[test]
+    fn test_record_140() {
+        //     #??#????#??#?##??? 1,1,1,1,6,1
+        //  0. #..#.
+        //  ---
+        //     ???#??#?##??? 1,1,6,1
+        //  1. #..#.######.#
+        //  2. .#.#.######.#
+        test_record_count("#??#????#??#?##??? 1,1,1,1,6,1", 2);
+    }
+
+    #[test]
+    fn test_record_951() {
+        //     ???.????#????????? 1,7,5
+        //  1. #...#######.#####.
+        //  2. .#..#######.#####.
+        //  3. ..#.#######.#####.
+        //  ---
+        //  4. #....#######.#####
+        //  5. .#...#######.#####
+        //  6. ..#..#######.#####
+        //  ---
+        //  7. #...#######..#####
+        //  8. .#..#######..#####
+        //  9. ..#.#######..#####
+        //  ---
+        test_record_count("???.????#?????????. 1,7,5", 9);
+    }
+    #[test]
+    fn test_record_952_precheck_1() {
+        //     ?.#?.?#? 1,2
+        //  1. ..#..##.
+        //  2. ..#...##
+        test_record_count("?.#?.?#? 1,2", 2);
+    }
+    #[test]
+    fn test_record_952() {
+        //     ?.?.#?.?#? 1,2
+        //  1. ....#..##.
+        //  2. ....#...##
+        test_record_count("?.?.#?.?#? 1,2", 2);
     }
 }
