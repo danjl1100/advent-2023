@@ -13,7 +13,7 @@
     };
     # decrease total count of flake dependencies by following versions from "rust-overlay" input
     flake-utils.follows = "rust-overlay/flake-utils";
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-23.05";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-23.11";
     crane.inputs.nixpkgs.follows = "nixpkgs";
   };
 
@@ -104,6 +104,7 @@
             packages = [
               pkgs.alejandra
               pkgs.bacon
+              pkgs.cargo-expand
             ];
           };
         };

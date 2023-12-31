@@ -227,3 +227,166 @@ where
         None
     }
 }
+
+pub mod math {
+    use std::num::NonZeroUsize;
+
+    /// Greatest Common Divisor
+    ///
+    /// ```
+    /// use advent_2023::math::gcd;
+    ///
+    /// // trivial cases
+    /// assert_eq!(gcd(0, 3).get(), 3);
+    /// assert_eq!(gcd(2, 0).get(), 2);
+    /// assert_eq!(gcd(0, 0).get(), 1);
+    ///
+    /// // nontrivial
+    /// assert_eq!(gcd(2, 3).get(), 1, "2, 3");
+    /// assert_eq!(gcd(42, 6).get(), 6, "42, 6");
+    /// assert_eq!(gcd(6, 42).get(), 6, "6, 42");
+    /// assert_eq!(gcd(48, 18).get(), 6, "48, 18");
+    ///
+    /// ```
+    pub fn gcd(a: usize, b: usize) -> NonZeroUsize {
+        let one = NonZeroUsize::new(1).expect("nonzero");
+
+        let a = NonZeroUsize::try_from(a).ok();
+        let b = NonZeroUsize::try_from(b).ok();
+
+        match (a, b) {
+            (None, None) => one,
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (Some(a), Some(b)) => {
+                let a = a.get();
+                let b = b.get();
+
+                let (smaller, larger) = if a < b { (a, b) } else { (b, a) };
+                let larger = larger.rem_euclid(smaller);
+
+                gcd(smaller, larger)
+            }
+        }
+    }
+
+    /// Least Common Multiple
+    ///
+    /// ```
+    /// use advent_2023::math::lcm;
+    ///
+    /// assert_eq!(lcm(2, 4), 4);
+    /// assert_eq!(lcm(10, 7), 70);
+    /// assert_eq!(lcm(5, 7), 35);
+    /// ```
+    pub fn lcm(a: usize, b: usize) -> usize {
+        let divisor = gcd(a, b);
+        (a * b) / divisor
+    }
+}
+
+pub mod nonempty {
+    /// `Vec` guaranteed to be non-empty
+    ///
+    /// # Usage:
+    ///
+    /// Mutable slice operations are OK
+    ///
+    /// ```
+    /// use advent_2023::{nonempty::NonEmptyVec, vec_nonempty};
+    /// let mut compile_error = NonEmptyVec::new(vec![1, 2, 3]).unwrap();
+    ///
+    /// // slice mutation - allowed
+    /// compile_error[0] = 5;
+    ///
+    /// assert_eq!(compile_error, vec_nonempty![5, 2, 3]);
+    /// ```
+    ///
+    /// Using mutable `Vec` methods is forbidden (slice mutation shown above is fine)
+    /// ```compile_fail
+    /// # use advent_2023::{nonempty::NonEmptyVec, vec_nonempty};
+    /// # let mut compile_error = NonEmptyVec::new(vec![1, 2, 3]).unwrap();
+    /// #
+    /// # // slice mutation - allowed
+    /// # compile_error[0] = 5;
+    /// #
+    /// # assert_eq!(compile_error, vec_nonempty![5, 2, 3]);
+    /// // Vec mutation - disallowed
+    /// compile_error.remove(0);
+    /// ```
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct NonEmptyVec<T>(Vec<T>);
+
+    impl<T> NonEmptyVec<T> {
+        pub fn new(inner: Vec<T>) -> Option<Self> {
+            if inner.is_empty() {
+                None
+            } else {
+                Some(Self(inner))
+            }
+        }
+
+        pub fn first(&self) -> &T {
+            self.0.first().expect("nonempty")
+        }
+
+        pub fn split_first(&self) -> (&T, &[T]) {
+            self.0.split_first().expect("nonempty")
+        }
+
+        pub fn last(&self) -> &T {
+            self.0.last().expect("nonempty")
+        }
+
+        pub fn into_split_last(mut self) -> (Vec<T>, T) {
+            let last = self.0.pop().expect("nonempty");
+            (self.0, last)
+        }
+
+        pub fn map<U>(self, map_fn: impl Fn(T) -> U) -> NonEmptyVec<U> {
+            let vec = self.0.into_iter().map(map_fn).collect();
+            NonEmptyVec::new(vec).expect("nonempty after map")
+        }
+    }
+    // NOTE: Mutable access ONLY allowed as a slice
+    impl<T> std::ops::Deref for NonEmptyVec<T> {
+        type Target = [T]; // explicitly *NOT* type Target = Vec<T>;
+        fn deref(&self) -> &Self::Target {
+            &self.0[..]
+        }
+    }
+    impl<T> std::ops::DerefMut for NonEmptyVec<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0[..]
+        }
+    }
+    impl<T> std::iter::IntoIterator for NonEmptyVec<T> {
+        type Item = T;
+        type IntoIter = <Vec<T> as std::iter::IntoIterator>::IntoIter;
+        fn into_iter(self) -> Self::IntoIter {
+            self.0.into_iter()
+        }
+    }
+
+    impl<T: std::fmt::Debug> std::fmt::Debug for NonEmptyVec<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            <Vec<T> as std::fmt::Debug>::fmt(&self.0, f)
+        }
+    }
+
+    #[macro_export]
+    macro_rules! vec_nonempty {
+        ($elem:expr; $n:expr) => {{
+            let _compile_time_assert = match $n {
+                0 => [][0],
+                _ => {}
+            };
+            let v = vec![$elem; $n];
+            $crate::nonempty::NonEmptyVec::new(v).expect("nonempty via macro")
+        }};
+        ($($x:expr),+ $(,)?) => {{
+            let v = vec![$($x),+];
+            $crate::nonempty::NonEmptyVec::new(v).expect("nonempty via macro")
+        }};
+    }
+}
