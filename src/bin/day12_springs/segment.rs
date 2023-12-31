@@ -48,6 +48,14 @@ impl Segment {
     pub fn is_nullable(&self) -> bool {
         self.iter().all(Part::is_nullable)
     }
+    /// Largest single count this segment *must* cover (if all ?=0)
+    pub fn get_largest_min_run(&self) -> usize {
+        self.iter().map(Part::min_run).max().expect("nonempty")
+    }
+    /// Largest total amount this segment *could* cover (if all ?=1)
+    pub fn get_maximum_count(&self) -> usize {
+        self.iter().map(Part::len).sum()
+    }
 
     pub fn iter(&self) -> impl Iterator<Item = Part> + '_ {
         self.0.iter().copied()
@@ -126,6 +134,18 @@ pub enum Part {
     Unknown(NonZeroUsize),
 }
 impl Part {
+    #[allow(clippy::len_without_is_empty)] // empty has a different meaning for Part(NonZeroUsize)
+    pub fn len(self) -> usize {
+        match self {
+            Part::Absolute(count) | Part::Unknown(count) => count.get(),
+        }
+    }
+    pub fn min_run(self) -> usize {
+        match self {
+            Part::Absolute(count) => count.get(),
+            Part::Unknown(_) => 0,
+        }
+    }
     pub fn is_nullable(self) -> bool {
         match self {
             Part::Absolute(_) => false,

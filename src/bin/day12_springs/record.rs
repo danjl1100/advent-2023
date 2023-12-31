@@ -115,6 +115,13 @@ impl RecordInner {
         );
         let (segment_first, segments_rest) = self.segments.split_first();
 
+        // verify all segments are compatible with known_counts
+        if let Some(Impossible) =
+            Self::heurestic_segments_impossible((segment_first, segments_rest), &self.known_counts)
+        {
+            return 0;
+        }
+
         let start_count = if segment_first.is_nullable() { 0 } else { 1 };
 
         let mut total_options = 0;
@@ -129,6 +136,12 @@ impl RecordInner {
             let options = if counts_taken.is_empty() {
                 segment_first.is_nullable().then_some(1)
             } else {
+                // verify segment_first is compatible with counts
+                if let Some(Impossible) =
+                    Self::heurestic_segments_impossible((segment_first, &[]), counts_taken)
+                {
+                    continue;
+                }
                 let options = segment_first.count_possibilities(counts_taken, debug_indent_next);
                 Some(options)
             };
@@ -168,7 +181,41 @@ impl RecordInner {
         println!("returning total {total_options}");
         total_options
     }
+    /// Returns `true` if the segments cannot possibly match the known counts
+    fn heurestic_segments_impossible(
+        (segment_first, segments_rest): (&Segment, &[Segment]),
+        known_counts: &[NonZeroUsize],
+    ) -> Option<Impossible> {
+        let segments_iter = std::iter::once(segment_first).chain(segments_rest);
+
+        // verify largest segment run is within max count
+        let min_run = segments_iter
+            .clone()
+            .map(Segment::get_largest_min_run)
+            .max()
+            .expect("nonempty by construction");
+
+        match known_counts.iter().copied().max() {
+            Some(largest_count) if min_run > largest_count.get() => {
+                return Some(Impossible);
+            }
+            _ => {}
+        }
+
+        // verify segments are long enough for remaining counts
+        let max_total = segments_iter.map(Segment::get_maximum_count).sum();
+        let sum_remaining_counts: usize = known_counts.iter().copied().map(NonZeroUsize::get).sum();
+
+        if sum_remaining_counts > max_total {
+            return Some(Impossible);
+        }
+
+        None
+    }
 }
+
+#[derive(Debug)]
+struct Impossible;
 
 fn unfold_segments(
     segments: NonEmptyVec<Segment>,

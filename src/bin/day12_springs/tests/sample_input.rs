@@ -25,8 +25,7 @@ fn sample_input_record_3_pretest() {
     //    #?#?#?
     // 1. ######
     test_record_counts("#?#?#? 6", (1, 1));
-    // 4 of the 5 copies are free to shift right by 1, with the added Unknown
-    test_record_counts("?#?#?# 6", (1, 16));
+    // NOTE: not free to "slide" on the extra ?, since that is set ?=0 as a separator
 }
 #[test]
 fn sample_input_record_3_pretest_2() {
@@ -49,14 +48,15 @@ fn sample_input_record_3() {
 
 #[test]
 fn sample_input_record_4() {
-    test_record_counts("????.#...#... 4,1,1", (1, 1));
+    test_record_counts("????.#...#... 4,1,1", (1, 16));
 }
 
 #[test]
 fn sample_input_record_5() {
     super::test_record_count("????.######..#####. 1,6,5", 4);
-    let expected = todo!();
-    test_record_counts("????.######..#####. 1,6,5", (4, expected));
+    // TODO
+    // let expected = todo!();
+    // test_record_counts("????.######..#####. 1,6,5", (4, expected));
 }
 
 #[test]
@@ -75,15 +75,21 @@ fn sample_input_record_6_pretest() {
     // ---
     // 10 ##....#
     super::test_record_count("??????? 2,1", 10);
-    let expected = todo!();
-    test_record_counts("??????? 2,1", (10, expected));
+    // TODO
+    // todo!();
+    // // unfolded length is 7*5 + 4 = 39
+    // // 1. ##.# (len 4, possibilities 0..=35 -> 36)
+    // // 2. ##..# (len 5, possibilities 0..=34 -> 35)
+    // // so 36 + 35 + 34 + .. + 1 = 36 * 35 / 2 = 630
+    // test_record_counts("??????? 2,1", (10, 630));
 }
 
 #[test]
 fn sample_input_record_6() {
     super::test_record_count("?###???????? 3,2,1", 10);
-    let expected = todo!();
-    test_record_counts("?###???????? 3,2,1", (10, expected));
+    // TODO
+    // todo!();
+    // test_record_counts("?###???????? 3,2,1", (10, 506250));
 }
 
 #[test]
