@@ -1,5 +1,15 @@
 use crate::{day12_springs::record::Record, sum_counts, FACTOR_5};
 
+fn test_record_counts_only_unfolded(line: &str, expect_unfolded: usize) {
+    let record = Record::new(line).expect("valid line");
+    // let count = record.count_possibilities();
+    // assert_eq!(count, expected, "record (prior to unfold)");
+
+    let record_unfolded = record.unfold(FACTOR_5);
+    let count_unfolded = record_unfolded.count_possibilities();
+    assert_eq!(count_unfolded, expect_unfolded, "unfolded record");
+}
+
 fn test_record_counts(line: &str, (expected, expect_unfolded): (usize, usize)) {
     let record = Record::new(line).expect("valid line");
     let count = record.count_possibilities();
@@ -86,10 +96,15 @@ fn sample_input_record_6_pretest() {
 
 #[test]
 fn sample_input_record_6() {
-    super::test_record_count("?###???????? 3,2,1", 10);
-    // TODO
-    // todo!();
-    // test_record_counts("?###???????? 3,2,1", (10, 506250));
+    // vvvv--- `true` for BACON usage
+    if true {
+        super::test_record_count("?###???????? 3,2,1", 10);
+        // TODO
+        // test_record_counts("?###???????? 3,2,1", (10, 506250));
+    } else {
+        // TODO resume HERE
+        test_record_counts_only_unfolded("?###???????? 3,2,1", 506250);
+    }
 }
 
 #[test]

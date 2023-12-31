@@ -239,18 +239,17 @@ impl<'a> SegmentAnalysis<'a> {
         // FIXME avoid N-based recurse for Unknowns...
         // For now, input is not excessively long so recurse for each question-mark choice
 
-        let part_reduced_opt = count_part_unknown
-            .get()
-            .checked_sub(1)
-            .map(NonZeroUsize::new);
+        let mut drain_unknown = DrainUnknown::start_after(count_part_unknown);
+
+        let part_reduced_opt = drain_unknown.next();
         let parts_reduced = match part_reduced_opt {
-            Some(Some(part_reduced)) => {
+            Some(part_reduced) => {
                 // if let Some(part_reduced) = count_part_unknown.checked_sub(1)
                 let part_reduced = Part::Unknown(part_reduced);
                 // -1 to first
                 (part_reduced, self.parts_rest)
             }
-            Some(None) | None => {
+            None => {
                 // if count_part_unknown == ONE
                 // else
 
@@ -261,20 +260,22 @@ impl<'a> SegmentAnalysis<'a> {
                 parts_next
             }
         };
-        let parts_reduced_2 = part_reduced_opt.flatten().and_then(|part_reduced| {
-            let part_reduced_2 = part_reduced.get().checked_sub(1).map(NonZeroUsize::new);
+        let parts_reduced_2 = part_reduced_opt.and_then(|_| {
+            let part_reduced_2 = drain_unknown.next();
+
             match part_reduced_2 {
-                Some(Some(part_reduced_2)) => {
+                Some(part_reduced_2) => {
                     let part_reduced_2 = Part::Unknown(part_reduced_2);
                     // -2 (total) to first
                     Some((part_reduced_2, self.parts_rest))
                 }
-                Some(None) | None => {
+                None => {
                     // remove empty first
                     self.parts_rest.split_first_copy()
                 }
             }
         });
+        drop(drain_unknown); // dangerous to re-use, thinking it's from the beginning
 
         // split into two possibilities (ON, OFF)
         let unknown_on = {
@@ -284,7 +285,7 @@ impl<'a> SegmentAnalysis<'a> {
                     // if self.count_first.get() == 1
                     if let Some(counts_next) = self.counts_rest.split_first_copy() {
                         if let Some(parts_reduced_2) = parts_reduced_2 {
-                            // use `part_reduced_2` to add pseudo-separatorof Unknown OFF, after the assumed ON
+                            // use `part_reduced_2` to add pseudo-separator of Unknown OFF, after the assumed ON
                             self.recurse(
                                 "assume Unknown = ON, pop_front count, parts reduce x2",
                                 parts_reduced_2,
@@ -294,7 +295,7 @@ impl<'a> SegmentAnalysis<'a> {
                             .count()
                         } else {
                             // the assumed "Unknown ON" completes the count,
-                            // but there remaining counts with no remaining part
+                            // but there are remaining counts with no remaining part
                             0
                         }
                     } else {
@@ -311,9 +312,41 @@ impl<'a> SegmentAnalysis<'a> {
                 }
                 Some(Some(count_reduced)) => {
                     // else if let Some(count_reduced) = self.count_first.checked_sub(1)
+
+                    let (_, new_parts_rest) = parts_reduced;
+                    // let (new_part_first_orig, count_reduced_orig) = {
+                    //     let mut drain_unknown = DrainUnknown::start_after(count_part_unknown);
+                    //     let mut new_part_first = parts_reduced.0;
+                    //     let mut count_reduced = count_reduced;
+                    //     drain_unknown.next();
+                    //     while let Some(reduced_unknown_count) = drain_unknown.next() {
+                    //         if let Some(new_count_reduced) =
+                    //             NonZeroUsize::new(count_reduced.get() - 1)
+                    //         {
+                    //             new_part_first = Part::Unknown(reduced_unknown_count);
+                    //             count_reduced = new_count_reduced;
+                    //         } else {
+                    //             break;
+                    //         }
+                    //     }
+                    //     (new_part_first, count_reduced)
+                    // };
+                    let (new_part_first, count_reduced) = {
+                        if count_part_unknown.get() >= 2 {
+                            let (new_part_first, new_count_reduced) =
+                                DrainUnknown::last_pair(count_part_unknown, self.count_first);
+                            let new_part_first = Part::Unknown(new_part_first);
+                            (new_part_first, new_count_reduced)
+                        } else {
+                            (parts_reduced.0, count_reduced)
+                        }
+                    };
+                    // assert_eq!(new_part_first, new_part_first_orig);
+                    // assert_eq!(count_reduced, count_reduced_orig);
+
                     self.recurse(
-                        "assume Unknown = ON, reduce count",
-                        parts_reduced,
+                        "assume Unknown = ON, reduce count x-many",
+                        (new_part_first, new_parts_rest),
                         (count_reduced, self.counts_rest),
                         Some(ForceLeftAlign),
                     )
@@ -346,6 +379,36 @@ impl<'a> SegmentAnalysis<'a> {
 
 #[derive(Clone, Copy, Debug)]
 struct ForceLeftAlign;
+
+// NOT copy
+struct DrainUnknown(usize);
+impl DrainUnknown {
+    fn start_after(value: NonZeroUsize) -> Self {
+        Self(value.get() - 1)
+    }
+    fn last_pair(lhs: NonZeroUsize, rhs: NonZeroUsize) -> (NonZeroUsize, NonZeroUsize) {
+        Self(lhs.get())
+            .last_with(Self(rhs.get()))
+            .expect("nonzero's have a last")
+    }
+    fn last_with(self, other: Self) -> Option<(NonZeroUsize, NonZeroUsize)> {
+        let steps = self.0.min(other.0).checked_sub(1)?;
+        let last_self =
+            NonZeroUsize::new(self.0 - steps).expect("subtracting size less 1 yields nonzero");
+        let last_other =
+            NonZeroUsize::new(other.0 - steps).expect("subtracting size less 1 yields nonzero");
+        Some((last_self, last_other))
+    }
+}
+impl Iterator for DrainUnknown {
+    type Item = NonZeroUsize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let count = NonZeroUsize::new(self.0)?;
+        self.0 = count.get() - 1;
+        Some(count)
+    }
+}
 
 pub fn unsplit_to_vec<T: Copy>(first: T, rest: &[T]) -> Vec<T> {
     std::iter::once(first).chain(rest.iter().copied()).collect()

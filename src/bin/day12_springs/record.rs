@@ -119,10 +119,19 @@ impl RecordInner {
         if let Some(Impossible) =
             Self::heurestic_segments_impossible((segment_first, segments_rest), &self.known_counts)
         {
+            print!("{:width$}", "", width = debug_indent_next);
+            println!("ignore impossible");
             return 0;
         }
 
-        let start_count = if segment_first.is_nullable() { 0 } else { 1 };
+        let start_count = if segments_rest.is_empty() {
+            // no more segments, skip to accepting ALL counts
+            self.known_counts.len()
+        } else if segment_first.is_nullable() {
+            0
+        } else {
+            1
+        };
 
         let mut total_options = 0;
         for take_count in start_count..(self.known_counts.len() + 1) {
@@ -140,6 +149,11 @@ impl RecordInner {
                 if let Some(Impossible) =
                     Self::heurestic_segments_impossible((segment_first, &[]), counts_taken)
                 {
+                    print!("{:width$}", "", width = debug_indent_next);
+                    println!(
+                        "ignore impossible take_count={take_count} of {total}",
+                        total = self.known_counts.len(),
+                    );
                     continue;
                 }
                 let options = segment_first.count_possibilities(counts_taken, debug_indent_next);
