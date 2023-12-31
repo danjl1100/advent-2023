@@ -4,7 +4,7 @@ use advent_2023::nonempty::NonEmptyVec;
 
 use crate::ONE;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Segment(pub NonEmptyVec<Part>);
 
 type SegmentAndMeta = (Option<LeadingSep>, Segment, Option<TrailingSep>);
@@ -128,7 +128,7 @@ impl IntoIterator for Segment {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Part {
     Absolute(NonZeroUsize),
     Unknown(NonZeroUsize),

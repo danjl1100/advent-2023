@@ -14,6 +14,72 @@ mod day12_springs {
 
     #[cfg(test)]
     mod tests;
+
+    pub mod cache {
+        use std::hash::Hash;
+        use std::{collections::HashMap, num::NonZeroUsize};
+
+        pub struct Cache<T: Hash + Eq> {
+            map: HashMap<Key<T>, usize>,
+            lookup_count: usize,
+        }
+        impl<T: Hash + Eq> Cache<T> {
+            pub fn lookup(&mut self, key: &Key<T>) -> Option<usize> {
+                self.lookup_count += 1;
+                self.map.get(key).copied()
+            }
+            /// Panics if there is already a value stored
+            pub fn save_new(&mut self, key: Key<T>, result: usize) {
+                let prev = self.map.insert(key, result);
+                assert_eq!(prev, None);
+            }
+            pub fn summary<'a>(&self, label: &'a str) -> impl std::fmt::Display + 'a {
+                let Self {
+                    ref map,
+                    lookup_count,
+                } = *self;
+                let len = map.len();
+                Summary {
+                    label,
+                    len,
+                    lookup_count,
+                }
+            }
+        }
+        impl<T: Hash + Eq> Default for Cache<T> {
+            fn default() -> Self {
+                Self {
+                    map: HashMap::default(),
+                    lookup_count: 0,
+                }
+            }
+        }
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        pub struct Key<T> {
+            pub value: T,
+            pub counts: Vec<NonZeroUsize>,
+        }
+
+        struct Summary<'a> {
+            label: &'a str,
+            len: usize,
+            lookup_count: usize,
+        }
+        impl std::fmt::Display for Summary<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let Self {
+                    label,
+                    len,
+                    lookup_count,
+                } = *self;
+                let hit_ratio = (len as f64) / (lookup_count as f64) * 100.0;
+                write!(
+                    f,
+                    "CACHE {label}: {len} stored across {lookup_count} lookups {hit_ratio:.1}%"
+                )
+            }
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -27,8 +93,12 @@ fn main() -> anyhow::Result<()> {
         .map(|record| record.unfold(FACTOR_5))
         .collect::<Vec<_>>();
 
+    let sum_start = Instant::now();
+
     let sum = sum_counts(&records_unfolded);
-    eprintln!("Sum of possibility counts: {sum}");
+
+    let total_duration = sum_start.elapsed();
+    eprintln!("Sum of possibility counts: {sum}, in {total_duration:?}");
 
     Ok(())
 }

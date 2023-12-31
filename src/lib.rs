@@ -314,7 +314,7 @@ pub mod nonempty {
     /// // Vec mutation - disallowed
     /// compile_error.remove(0);
     /// ```
-    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct NonEmptyVec<T>(Vec<T>);
 
     impl<T> NonEmptyVec<T> {

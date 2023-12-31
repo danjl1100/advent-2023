@@ -1,5 +1,6 @@
 //! Segment-specific analysis functions/types
 
+use super::cache;
 use crate::{DebugParts, Part, Segment};
 use advent_2023::nonempty::NonEmptyVec;
 use std::num::NonZeroUsize;
@@ -9,6 +10,7 @@ impl Segment {
         &self,
         expected_counts: &[NonZeroUsize],
         debug_indent: usize,
+        cache: &mut cache::Cache<Vec<Part>>,
     ) -> usize {
         print!("{:width$}", "", width = debug_indent);
         println!("[Segment::count_possibilities]");
@@ -18,7 +20,7 @@ impl Segment {
         };
 
         let parts_split = self.0.split_first_copy();
-        SegmentAnalysis::new(parts_split, counts_split, debug_indent).count()
+        SegmentAnalysis::new(parts_split, counts_split, debug_indent).count(cache)
     }
 }
 
@@ -75,7 +77,24 @@ impl<'a> SegmentAnalysis<'a> {
     /// ====================================
     ///            ^-----------^^----Unknowns chosen to be NONE
     ///
-    fn count(self) -> usize {
+    fn count(self, cache: &mut cache::Cache<Vec<Part>>) -> usize {
+        let parts = std::iter::once(self.part_first)
+            .chain(self.parts_rest.iter().copied())
+            .collect();
+        let counts = std::iter::once(self.count_first)
+            .chain(self.counts_rest.iter().copied())
+            .collect();
+        let key = cache::Key {
+            value: parts,
+            counts,
+        };
+        cache.lookup(&key).unwrap_or_else(|| {
+            let result = self.count_inner(cache);
+            cache.save_new(key, result);
+            result
+        })
+    }
+    fn count_inner(self, cache: &mut cache::Cache<Vec<Part>>) -> usize {
         let Self {
             part_first,
             parts_rest,
@@ -106,11 +125,12 @@ impl<'a> SegmentAnalysis<'a> {
             } else {
                 // Non-singleton case
                 match part_first {
-                    Part::Absolute(count_part_absolute) => {
-                        ("case_absolute", self.case_absolute(count_part_absolute))
-                    }
+                    Part::Absolute(count_part_absolute) => (
+                        "case_absolute",
+                        self.case_absolute(count_part_absolute, cache),
+                    ),
                     Part::Unknown(count_part_unknown) => {
-                        ("case_unknown", self.case_unknown(count_part_unknown))
+                        ("case_unknown", self.case_unknown(count_part_unknown, cache))
                     }
                 }
             };
@@ -153,7 +173,11 @@ impl<'a> SegmentAnalysis<'a> {
             }
         }
     }
-    fn case_absolute(&self, count_part_absolute: NonZeroUsize) -> (usize, &'static str) {
+    fn case_absolute(
+        &self,
+        count_part_absolute: NonZeroUsize,
+        cache: &mut cache::Cache<Vec<Part>>,
+    ) -> (usize, &'static str) {
         // anchored by first
         //
         // For a match, the absolute part MUST fully contain `count_first`
@@ -221,10 +245,14 @@ impl<'a> SegmentAnalysis<'a> {
                 counts_next,
                 new_force_left_align,
             )
-            .count();
+            .count(cache);
         (result, "recurse")
     }
-    fn case_unknown(&self, count_part_unknown: NonZeroUsize) -> (usize, &'static str) {
+    fn case_unknown(
+        &self,
+        count_part_unknown: NonZeroUsize,
+        cache: &mut cache::Cache<Vec<Part>>,
+    ) -> (usize, &'static str) {
         if self.force_left_align.is_some()
             && self.counts_rest.is_empty()
             && count_part_unknown >= self.count_first
@@ -275,7 +303,7 @@ impl<'a> SegmentAnalysis<'a> {
                 }
             }
         });
-        drop(drain_unknown); // dangerous to re-use, thinking it's from the beginning
+        let _ = drain_unknown; // dangerous to re-use, thinking it's from the beginning
 
         // split into two possibilities (ON, OFF)
         let unknown_on = {
@@ -292,7 +320,7 @@ impl<'a> SegmentAnalysis<'a> {
                                 counts_next,
                                 None,
                             )
-                            .count()
+                            .count(cache)
                         } else {
                             // the assumed "Unknown ON" completes the count,
                             // but there are remaining counts with no remaining part
@@ -314,23 +342,6 @@ impl<'a> SegmentAnalysis<'a> {
                     // else if let Some(count_reduced) = self.count_first.checked_sub(1)
 
                     let (_, new_parts_rest) = parts_reduced;
-                    // let (new_part_first_orig, count_reduced_orig) = {
-                    //     let mut drain_unknown = DrainUnknown::start_after(count_part_unknown);
-                    //     let mut new_part_first = parts_reduced.0;
-                    //     let mut count_reduced = count_reduced;
-                    //     drain_unknown.next();
-                    //     while let Some(reduced_unknown_count) = drain_unknown.next() {
-                    //         if let Some(new_count_reduced) =
-                    //             NonZeroUsize::new(count_reduced.get() - 1)
-                    //         {
-                    //             new_part_first = Part::Unknown(reduced_unknown_count);
-                    //             count_reduced = new_count_reduced;
-                    //         } else {
-                    //             break;
-                    //         }
-                    //     }
-                    //     (new_part_first, count_reduced)
-                    // };
                     let (new_part_first, count_reduced) = {
                         if count_part_unknown.get() >= 2 {
                             let (new_part_first, new_count_reduced) =
@@ -350,7 +361,7 @@ impl<'a> SegmentAnalysis<'a> {
                         (count_reduced, self.counts_rest),
                         Some(ForceLeftAlign),
                     )
-                    .count()
+                    .count(cache)
                 }
                 None => {
                     //else
@@ -370,7 +381,7 @@ impl<'a> SegmentAnalysis<'a> {
                 (self.count_first, self.counts_rest),
                 self.force_left_align,
             )
-            .count()
+            .count(cache)
         };
         let sum = unknown_on + unknown_off;
         (sum, "sum of ON and OFF options")

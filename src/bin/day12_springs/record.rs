@@ -2,7 +2,7 @@ use advent_2023::{nonempty::NonEmptyVec, vec_nonempty};
 use anyhow::Context;
 use std::num::NonZeroUsize;
 
-use crate::{Part, Segment, SegmentBuilder, ONE};
+use crate::{day12_springs::cache, Part, Segment, SegmentBuilder, ONE};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
@@ -101,11 +101,22 @@ impl Record {
         }
     }
     pub fn count_possibilities(&self) -> usize {
-        self.inner.count_possibilities_inner(0)
+        let mut caches = Caches::default();
+        let result = self.inner.count_possibilities_inner(0, &mut caches);
+        eprintln!("{}", caches.segment.summary("SEGMENT"));
+        eprintln!("{}", caches.part.summary("PART"));
+        result
     }
 }
+
+#[derive(Default)]
+struct Caches {
+    segment: cache::Cache<Segment>,
+    part: cache::Cache<Vec<Part>>,
+}
+
 impl RecordInner {
-    fn count_possibilities_inner(&self, debug_indent: usize) -> usize {
+    fn count_possibilities_inner(&self, debug_indent: usize, caches: &mut Caches) -> usize {
         print!("{:width$}", "", width = debug_indent);
         let debug_indent_next = debug_indent + 4;
         println!(
@@ -156,7 +167,19 @@ impl RecordInner {
                     );
                     continue;
                 }
-                let options = segment_first.count_possibilities(counts_taken, debug_indent_next);
+                let key = cache::Key {
+                    value: segment_first.clone(),
+                    counts: counts_taken.to_vec(),
+                };
+                let options = caches.segment.lookup(&key).unwrap_or_else(|| {
+                    let result = key.value.count_possibilities(
+                        &key.counts,
+                        debug_indent_next,
+                        &mut caches.part,
+                    );
+                    caches.segment.save_new(key, result);
+                    result
+                });
                 Some(options)
             };
 
@@ -171,7 +194,8 @@ impl RecordInner {
                             segments: segments_rest,
                             known_counts: counts_rest.to_vec(),
                         };
-                        let options_rest = rest.count_possibilities_inner(debug_indent_next);
+                        let options_rest =
+                            rest.count_possibilities_inner(debug_indent_next, caches);
 
                         let options_num = options.unwrap_or(1);
                         total_options += options_num * options_rest;

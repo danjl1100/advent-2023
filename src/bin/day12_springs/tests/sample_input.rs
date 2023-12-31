@@ -73,14 +73,18 @@ fn sample_input_record_6_pretest() {
     // 10 ##....#
     super::test_record_count("??????? 2,1", 10);
 }
+// TODO code reports 3691170, but it's impossible to verify by hand
+// #[test]
+// fn sample_input_record_6_pretest_unfold_modified() {
+//     // unfolded length is 7*5 + 4 = 39
+//     // 1. ##.# (len 4, possibilities 0..=35 -> 36)
+//     // 2. ##..# (len 5, possibilities 0..=34 -> 35)
+//     // so 36 + 35 + 34 + .. + 1 = 36 * 35 / 2 = 630
+//     test_record_counts("???????. 2,1", (10, 630));
+// }
 #[test]
-fn sample_input_record_6_pretest_unfold() {
-    todo!("needs caching");
-    // unfolded length is 7*5 + 4 = 39
-    // 1. ##.# (len 4, possibilities 0..=35 -> 36)
-    // 2. ##..# (len 5, possibilities 0..=34 -> 35)
-    // so 36 + 35 + 34 + .. + 1 = 36 * 35 / 2 = 630
-    test_record_counts("??????? 2,1", (10, 630));
+fn sample_input_record_6_pretest_unfold_outrageous() {
+    test_record_counts("??????? 2,1", (10, 3268760));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use crate::{Part, Record, Segment};
+use crate::{day12_springs::cache, Part, Record, Segment};
 use advent_2023::vec_nonempty;
 use std::num::NonZeroUsize;
 
@@ -89,7 +89,8 @@ fn test_segment_count(symbols: &str, counts: &[usize], expected: usize) {
     else {
         panic!("invalid 0 in specified counts: {counts:?}")
     };
-    let count = segment.count_possibilities(&counts, 0);
+    let mut cache = cache::Cache::default();
+    let count = segment.count_possibilities(&counts, 0, &mut cache);
     assert_eq!(count, expected, "symbols {symbols:?}, counts {counts:?}");
 }
 
