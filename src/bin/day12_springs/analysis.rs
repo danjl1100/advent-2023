@@ -345,7 +345,7 @@ impl<'a> SegmentAnalysis<'a> {
                     // assert_eq!(count_reduced, count_reduced_orig);
 
                     self.recurse(
-                        "assume Unknown = ON, reduce count x-many",
+                        "assume Unknown = ON x-many, reduce count x-many",
                         (new_part_first, new_parts_rest),
                         (count_reduced, self.counts_rest),
                         Some(ForceLeftAlign),

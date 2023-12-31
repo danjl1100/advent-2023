@@ -38,10 +38,15 @@ fn sum_counts(records: &[Record]) -> usize {
         .iter()
         .enumerate()
         .map(|(index, record)| {
+            let line = index + 1;
+            eprint!("{line} ");
+
             let start = Instant::now();
             let result = record.count_possibilities();
             let elapsed = start.elapsed();
-            eprintln!("RECORD {index:03} CALCULATED IN {elapsed:?}");
+            if elapsed.as_secs() > 0 {
+                eprintln!("\nLINE {line:03} CALCULATED IN {elapsed:?}");
+            }
             result
         })
         .sum()
