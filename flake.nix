@@ -93,6 +93,9 @@
           rust-doc = flake-utils.lib.mkApp {
             drv = crate.drv-open-doc.for-crate crate-name;
           };
+          rust-doc-deps = flake-utils.lib.mkApp {
+            drv = crate.drv-open-doc.for-crate-deps crate-name;
+          };
           rust-doc-std = flake-utils.lib.mkApp {
             drv = crate.drv-open-doc.for-std rustToolchainForDevshell;
           };

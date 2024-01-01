@@ -21,19 +21,19 @@ pub fn get_input_string() -> anyhow::Result<String> {
     Ok(input)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CharIndex {
     /// How many bytes you need to skip to find the start of the char
     byte_index: usize,
     /// How many chars proceed this char
     char_sequence: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CharEndSequence {
     /// How many chars proceed this char
     char_sequence: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CharIndexEnd {
     /// End occurs within middle of the string
     Position(CharIndex),
@@ -47,8 +47,11 @@ impl CharIndex {
                 byte_index: end_index,
                 ..
             }) => input.get(self.byte_index..end_index),
-            CharIndexEnd::End(_) => input.get(self.byte_index..),
+            CharIndexEnd::End(_) => self.slice_string_to_end(input),
         }
+    }
+    pub fn slice_string_to_end(self, input: &str) -> Option<&str> {
+        input.get(self.byte_index..)
     }
     pub fn is_zero(self) -> bool {
         self.byte_index == 0 && self.char_sequence == 0
@@ -74,22 +77,22 @@ impl CharIndexEnd {
     }
 }
 
-struct CharIndices<'a> {
+pub struct CharIndices<'a> {
     iter: std::iter::Peekable<std::iter::Enumerate<std::str::CharIndices<'a>>>,
     last_char_sequence: Option<usize>,
 }
 impl<'a> CharIndices<'a> {
-    fn new(input: &'a str) -> Self {
+    pub fn new(input: &'a str) -> Self {
         CharIndices {
             iter: input.char_indices().enumerate().peekable(),
             last_char_sequence: None,
         }
     }
-    fn take_end_char_sequence(&mut self) -> Option<CharEndSequence> {
+    pub fn take_end_char_sequence(&mut self) -> Option<CharEndSequence> {
         let char_sequence = self.last_char_sequence.take()? + 1;
         Some(CharEndSequence { char_sequence })
     }
-    fn peek(&mut self) -> Option<(CharIndex, char)> {
+    pub fn peek(&mut self) -> Option<(CharIndex, char)> {
         let (char_sequence, (byte_index, char_value)) = self.iter.peek().copied()?;
         Some((
             CharIndex {
@@ -225,6 +228,92 @@ where
         }
         // exhausted char_indices
         None
+    }
+}
+
+pub mod print {
+    use crate::{CharIndex, CharIndexEnd};
+
+    pub struct Highlight {
+        pub start: CharIndex,
+        pub end: CharIndexEnd,
+        pub style: console::Style,
+    }
+    impl std::cmp::PartialEq for Highlight {
+        fn eq(&self, other: &Self) -> bool {
+            self.start == other.start && self.end == other.end
+        }
+    }
+    impl std::cmp::PartialOrd for Highlight {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            self.start
+                .partial_cmp(&other.start)
+                .or(self.end.partial_cmp(&other.end))
+        }
+    }
+
+    #[derive(Default)]
+    pub struct ConsolePrinter(Option<console::Term>);
+    impl ConsolePrinter {
+        pub fn print_line(&mut self, line: &str, spans: &[Highlight]) -> anyhow::Result<()> {
+            use std::io::Write;
+
+            let Some(term) = &mut self.0 else {
+                return Ok(());
+            };
+
+            let mut prev_end = None;
+            let mut remaining = Some(());
+            for span in spans.iter() {
+                let Highlight {
+                    start: elem_start,
+                    end: elem_end,
+                    ref style,
+                } = *span;
+
+                let prefix_start = prev_end.unwrap_or(CharIndex::default());
+                let prefix_str = prefix_start
+                    .slice_string(CharIndexEnd::Position(elem_start), line)
+                    .expect("valid indices");
+
+                let elem_str = elem_start
+                    .slice_string(elem_end, line)
+                    .expect("valid indices");
+                let elem_str = style.apply_to(elem_str);
+
+                write!(term, "{prefix_str}{elem_str}")?;
+
+                prev_end = match elem_end {
+                    CharIndexEnd::Position(col) => Some(col),
+                    CharIndexEnd::End(_) => {
+                        remaining.take();
+                        None
+                    }
+                };
+            }
+            if remaining.is_some() {
+                // write after prev_end
+                let suffix_start = prev_end.unwrap_or(CharIndex::default());
+                let suffix_str = suffix_start
+                    .slice_string_to_end(line)
+                    .expect("valid indices");
+                write!(term, "{suffix_str}")?;
+            }
+
+            writeln!(term)?;
+            Ok(term.flush()?)
+        }
+    }
+
+    impl From<Option<console::Term>> for ConsolePrinter {
+        fn from(value: Option<console::Term>) -> Self {
+            Self(value)
+        }
+    }
+    impl From<console::Term> for ConsolePrinter {
+        fn from(value: console::Term) -> Self {
+            Self(Some(value))
+        }
     }
 }
 

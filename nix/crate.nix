@@ -60,12 +60,24 @@
         cargoDocExtraArgs = "--workspace --no-deps"; # override default which is "--no-deps"
       }
     ));
+  my-crate-doc-deps = craneLib.cargoDoc (commonArgs
+    // {
+      inherit cargoArtifacts;
+    }
+    // (
+      if isWasm
+      then {}
+      else {
+        cargoDocExtraArgs = "--workspace"; # override default which is "--no-deps"
+      }
+    ));
 in rec {
   checks = {
     # Build the crate as part of `nix flake check` for convenience
     inherit my-crate;
 
     inherit my-crate-doc;
+    inherit my-crate-doc-deps;
 
     # Run clippy (and deny all warnings) on the crate source,
     # again, resuing the dependency artifacts from above.
@@ -111,6 +123,7 @@ in rec {
 
   package = my-crate;
   doc = my-crate-doc;
+  doc-deps = my-crate-doc-deps;
 
   drv-open-doc = let
     open-cmd =
@@ -125,6 +138,14 @@ in rec {
         text = ''
           echo "Opening docs for crate \"${crate-name}\""
           ${open-cmd} "file://${my-crate-doc}/share/doc/${dash-to-underscores crate-name}/index.html"
+        '';
+      };
+    for-crate-deps = crate-name:
+      pkgs.writeShellApplication {
+        name = "open-doc-${crate-name}";
+        text = ''
+          echo "Opening docs for crate \"${crate-name}\""
+          ${open-cmd} "file://${my-crate-doc-deps}/share/doc/${dash-to-underscores crate-name}/index.html"
         '';
       };
     for-std = toolchainWithRustDoc:
