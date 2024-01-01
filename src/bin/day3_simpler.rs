@@ -60,7 +60,7 @@ fn interpret_engine_schematic_inner(
         let mut before_number_start = None;
         loop {
             let mut number_start = None;
-            while let Some((col, c)) = chars.next() {
+            for (col, c) in chars.by_ref() {
                 if is_digit(c) {
                     number_start = Some(col);
                     break;
@@ -72,7 +72,7 @@ fn interpret_engine_schematic_inner(
             };
 
             let mut number_end = None;
-            while let Some((col, c)) = chars.next() {
+            for (col, c) in chars.by_ref() {
                 if !is_digit(c) {
                     number_end = Some((CharIndexEnd::Position(col), Some(c)));
                     break;
@@ -95,7 +95,7 @@ fn interpret_engine_schematic_inner(
 
             // eval start/end
             let count_this_line = before_number_start.map_or(0, |(_, c)| count_symbol(c))
-                + number_end.1.map_or(0, |c| count_symbol(c));
+                + number_end.1.map_or(0, count_symbol);
 
             if let Some((col, '*')) = before_number_start {
                 asterisk_positions.push(InputPosition {
@@ -170,7 +170,7 @@ fn interpret_engine_schematic_inner(
 
             if let Some(pos) = asterisk_positions.pop() {
                 assert!(asterisk_positions.is_empty());
-                let list = part_numbers_by_asterisk.entry(pos).or_insert(vec![]);
+                let list = part_numbers_by_asterisk.entry(pos).or_default();
                 list.push(number);
             }
 
