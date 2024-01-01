@@ -21,19 +21,19 @@ pub fn get_input_string() -> anyhow::Result<String> {
     Ok(input)
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CharIndex {
     /// How many bytes you need to skip to find the start of the char
     byte_index: usize,
     /// How many chars proceed this char
     char_sequence: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CharEndSequence {
     /// How many chars proceed this char
     char_sequence: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CharIndexEnd {
     /// End occurs within middle of the string
     Position(CharIndex),
