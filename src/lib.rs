@@ -21,19 +21,19 @@ pub fn get_input_string() -> anyhow::Result<String> {
     Ok(input)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd)]
 pub struct CharIndex {
     /// How many bytes you need to skip to find the start of the char
     byte_index: usize,
     /// How many chars proceed this char
     char_sequence: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd)]
 pub struct CharEndSequence {
     /// How many chars proceed this char
     char_sequence: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd)]
 pub enum CharIndexEnd {
     /// End occurs within middle of the string
     Position(CharIndex),
@@ -47,8 +47,11 @@ impl CharIndex {
                 byte_index: end_index,
                 ..
             }) => input.get(self.byte_index..end_index),
-            CharIndexEnd::End(_) => input.get(self.byte_index..),
+            CharIndexEnd::End(_) => self.slice_string_to_end(input),
         }
+    }
+    pub fn slice_string_to_end(self, input: &str) -> Option<&str> {
+        input.get(self.byte_index..)
     }
     pub fn is_zero(self) -> bool {
         self.byte_index == 0 && self.char_sequence == 0
@@ -225,6 +228,92 @@ where
         }
         // exhausted char_indices
         None
+    }
+}
+
+pub mod print {
+    use crate::{CharIndex, CharIndexEnd};
+
+    pub struct Highlight {
+        pub start: CharIndex,
+        pub end: CharIndexEnd,
+        pub style: console::Style,
+    }
+    impl std::cmp::PartialEq for Highlight {
+        fn eq(&self, other: &Self) -> bool {
+            self.start == other.start && self.end == other.end
+        }
+    }
+    impl std::cmp::PartialOrd for Highlight {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            self.start
+                .partial_cmp(&other.start)
+                .or(self.end.partial_cmp(&other.end))
+        }
+    }
+
+    #[derive(Default)]
+    pub struct ConsolePrinter(Option<console::Term>);
+    impl ConsolePrinter {
+        pub fn print_line(&mut self, line: &str, spans: &[Highlight]) -> anyhow::Result<()> {
+            use std::io::Write;
+
+            let Some(term) = &mut self.0 else {
+                return Ok(());
+            };
+
+            let mut prev_end = None;
+            let mut remaining = Some(());
+            for span in spans.iter() {
+                let Highlight {
+                    start: elem_start,
+                    end: elem_end,
+                    ref style,
+                } = *span;
+
+                let prefix_start = prev_end.unwrap_or(CharIndex::default());
+                let prefix_str = prefix_start
+                    .slice_string(CharIndexEnd::Position(elem_start), line)
+                    .expect("valid indices");
+
+                let elem_str = elem_start
+                    .slice_string(elem_end, line)
+                    .expect("valid indices");
+                let elem_str = style.apply_to(elem_str);
+
+                write!(term, "{prefix_str}{elem_str}")?;
+
+                prev_end = match elem_end {
+                    CharIndexEnd::Position(col) => Some(col),
+                    CharIndexEnd::End(_) => {
+                        remaining.take();
+                        None
+                    }
+                };
+            }
+            if remaining.is_some() {
+                // write after prev_end
+                let suffix_start = prev_end.unwrap_or(CharIndex::default());
+                let suffix_str = suffix_start
+                    .slice_string_to_end(line)
+                    .expect("valid indices");
+                write!(term, "{suffix_str}")?;
+            }
+
+            writeln!(term)?;
+            Ok(term.flush()?)
+        }
+    }
+
+    impl From<Option<console::Term>> for ConsolePrinter {
+        fn from(value: Option<console::Term>) -> Self {
+            Self(value)
+        }
+    }
+    impl From<console::Term> for ConsolePrinter {
+        fn from(value: console::Term) -> Self {
+            Self(Some(value))
+        }
     }
 }
 

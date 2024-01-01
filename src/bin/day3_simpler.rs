@@ -1,10 +1,18 @@
-use advent_2023::{CharIndex, CharIndexEnd, CharIndices};
+use advent_2023::{
+    print::{ConsolePrinter, Highlight},
+    CharIndex, CharIndexEnd, CharIndices,
+};
+
+const DEBUG_PRINT: bool = cfg!(test);
 
 fn main() -> anyhow::Result<()> {
     println!("hello engine-fixing elf!");
 
     let input = advent_2023::get_input_string()?;
-    let Stats { part_numbers_sum } = interpret_engine_schematic(&input)?;
+
+    let term = console::Term::buffered_stderr();
+
+    let Stats { part_numbers_sum } = interpret_engine_schematic(&input, term)?;
 
     println!("Sum of part numbers: {part_numbers_sum}");
 
@@ -15,20 +23,34 @@ fn main() -> anyhow::Result<()> {
 struct Stats {
     part_numbers_sum: u32,
 }
-fn interpret_engine_schematic(input: &str) -> anyhow::Result<Stats> {
+fn interpret_engine_schematic(
+    input: &str,
+    console_printer: impl Into<ConsolePrinter>,
+) -> anyhow::Result<Stats> {
+    interpret_engine_schematic_inner(input, console_printer.into())
+}
+fn interpret_engine_schematic_inner(
+    input: &str,
+    mut console_printer: ConsolePrinter,
+) -> anyhow::Result<Stats> {
+    if DEBUG_PRINT {
+        println!("------------------------------");
+    }
     let mut lines = input.lines().peekable();
 
     let mut part_numbers_sum = 0;
 
     let mut line_prev = None;
     while let Some(line) = lines.next() {
-        eprintln!("{line:?}");
-        println!("{line:?}");
+        if DEBUG_PRINT {
+            println!("{line:?}");
+        }
         let mut chars = CharIndices::new(line);
         let line_next = lines.peek().copied();
 
+        let mut debug_line_spans = vec![];
+        let mut before_number_start = None;
         loop {
-            let mut before_number_start = None;
             let mut number_start = None;
             while let Some((col, c)) = chars.next() {
                 if is_digit(c) {
@@ -77,21 +99,50 @@ fn interpret_engine_schematic(input: &str) -> anyhow::Result<Stats> {
                 count_symbols(line_next, line_search_start, line_search_end).unwrap_or(("N/A", 0));
 
             let count = count_this_line + count_prev_line + count_next_line;
-            if count > 0 {
+            let included = count > 0;
+            if included {
                 part_numbers_sum += number;
             }
 
-            let symbol_before = before_number_start.map(|(_, c)| c);
-            let symbol_after = number_end.1;
-            println!("        {span_prev_line}");
-            println!(
-                "Number: {char_before}{number_str}{char_after}",
-                char_before = opt_char_to_str(symbol_before),
-                char_after = opt_char_to_str(symbol_after),
-            );
-            println!("        {span_next_line}");
-            println!(" -> value {number}, {count} symbols,  ==> sum {part_numbers_sum}");
+            let debug_style = if included {
+                console::Style::new().cyan()
+            } else {
+                console::Style::new().red()
+            };
+            debug_line_spans.push(Highlight {
+                start: number_start,
+                end: number_end.0,
+                style: debug_style,
+            });
+
+            if DEBUG_PRINT {
+                let symbol_before = before_number_start.map(|(_, c)| c);
+                let symbol_after = number_end.1;
+
+                let show_prev_next_lines = line_prev.is_some() || line_next.is_some();
+                if show_prev_next_lines {
+                    println!("        {span_prev_line}");
+                }
+                println!(
+                    "Number: {char_before}{number_str}{char_after}",
+                    char_before = opt_char_to_str(symbol_before),
+                    char_after = opt_char_to_str(symbol_after),
+                );
+                dbg!((number_end, after_number_end));
+                if show_prev_next_lines {
+                    println!("        {span_next_line}");
+                }
+                println!(" -> value {number}, {count} symbols,  ==> sum {part_numbers_sum}");
+            }
+
+            before_number_start = match number_end {
+                (CharIndexEnd::Position(col), Some(c)) => Some((col, c)),
+                _ => None,
+            };
         }
+
+        console_printer.print_line(line, &debug_line_spans)?;
+        debug_line_spans.clear();
 
         // prep for next LINE
         line_prev = Some(line);
@@ -152,7 +203,7 @@ mod tests {
 ......755.
 ...$.*....
 .664.598..";
-        let stats = interpret_engine_schematic(input).unwrap();
+        let stats = interpret_engine_schematic(input, None).unwrap();
         assert_eq!(stats.part_numbers_sum, 4361);
     }
 
@@ -162,7 +213,29 @@ mod tests {
 ...*...*
 .5...7..
 ...*..6*";
-        let stats = interpret_engine_schematic(input).unwrap();
+        let stats = interpret_engine_schematic(input, None).unwrap();
         assert_eq!(stats.part_numbers_sum, 6);
+    }
+
+    macro_rules! test_line {
+        ($(
+                $line:expr => $expected:expr
+        );+ $(;)?) => {
+            $({
+                let line: &'static str = $line;
+                let expected: u32 = $expected;
+                let stats = interpret_engine_schematic(line, None).unwrap();
+                assert_eq!(stats.part_numbers_sum, expected, "{line:?} => {}", stringify!($expected));
+            })+
+        };
+    }
+    #[test]
+    fn numbers_sandwiching_symbol() {
+        test_line! {
+            ".1*2*.." => 3;
+            ".1*2..." => 3;
+            "....3*2" => 5;
+            ".123*40" => 123+40;
+        };
     }
 }
