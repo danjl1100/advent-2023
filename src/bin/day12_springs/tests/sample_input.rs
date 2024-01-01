@@ -123,3 +123,24 @@ fn sample_input_unfolded() {
     let sum = sum_counts(&unfolded);
     assert_eq!(sum, 525152);
 }
+
+// more, oddly specific
+
+#[test]
+fn other_record_44_pretest() {
+    super::test_record_count("#?#???? 6", 1);
+}
+#[test]
+fn other_record_44() {
+    // ????.?#?#????.???. 3,6,3
+    // equivalent for original case:
+    //     ????.?#?#???? 3,6
+    //  1. ###..######..
+    //  2. ###...######.
+    //  ---    . # #
+    //  3. .###.######..
+    //  4. .###..######.
+    //
+    // unfolded expects: 5184
+    test_record_counts("????.?#?#????.???. 3,6,3", (4, 5184));
+}

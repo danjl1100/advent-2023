@@ -1,5 +1,8 @@
 use std::{num::NonZeroUsize, time::Instant};
 
+const DEBUG_CACHE: bool = false;
+const DEBUG_PROGRESS: bool = true;
+
 pub use crate::day12_springs::{
     record::Record,
     segment::{DebugParts, Part, Segment, SegmentBuilder},
@@ -109,13 +112,19 @@ fn sum_counts(records: &[Record]) -> usize {
         .enumerate()
         .map(|(index, record)| {
             let line = index + 1;
-            eprint!("{line} ");
+            if DEBUG_PROGRESS {
+                eprint!("{line} ");
+            }
 
             let start = Instant::now();
             let result = record.count_possibilities();
             let elapsed = start.elapsed();
-            if elapsed.as_secs() > 0 {
-                eprintln!("\nLINE {line:03} CALCULATED IN {elapsed:?}");
+            if DEBUG_PROGRESS {
+                if elapsed.as_secs() > 0 {
+                    eprintln!("\nLINE {line:03} CALCULATED IN {elapsed:?}");
+                }
+            } else {
+                eprintln!("{result}");
             }
             result
         })

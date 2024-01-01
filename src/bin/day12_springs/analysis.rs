@@ -10,7 +10,7 @@ impl Segment {
         &self,
         expected_counts: &[NonZeroUsize],
         debug_indent: usize,
-        cache: &mut cache::Cache<Vec<Part>>,
+        cache: &mut Cache,
     ) -> usize {
         print!("{:width$}", "", width = debug_indent);
         println!("[Segment::count_possibilities]");
@@ -23,6 +23,8 @@ impl Segment {
         SegmentAnalysis::new(parts_split, counts_split, debug_indent).count(cache)
     }
 }
+
+pub(super) type Cache = cache::Cache<(Vec<Part>, Option<ForceLeftAlign>)>;
 
 struct SegmentAnalysis<'a> {
     part_first: Part,
@@ -77,7 +79,7 @@ impl<'a> SegmentAnalysis<'a> {
     /// ====================================
     ///            ^-----------^^----Unknowns chosen to be NONE
     ///
-    fn count(self, cache: &mut cache::Cache<Vec<Part>>) -> usize {
+    fn count(self, cache: &mut Cache) -> usize {
         let parts = std::iter::once(self.part_first)
             .chain(self.parts_rest.iter().copied())
             .collect();
@@ -85,7 +87,7 @@ impl<'a> SegmentAnalysis<'a> {
             .chain(self.counts_rest.iter().copied())
             .collect();
         let key = cache::Key {
-            value: parts,
+            value: (parts, self.force_left_align),
             counts,
         };
         cache.lookup(&key).unwrap_or_else(|| {
@@ -94,7 +96,7 @@ impl<'a> SegmentAnalysis<'a> {
             result
         })
     }
-    fn count_inner(self, cache: &mut cache::Cache<Vec<Part>>) -> usize {
+    fn count_inner(self, cache: &mut Cache) -> usize {
         let Self {
             part_first,
             parts_rest,
@@ -176,7 +178,7 @@ impl<'a> SegmentAnalysis<'a> {
     fn case_absolute(
         &self,
         count_part_absolute: NonZeroUsize,
-        cache: &mut cache::Cache<Vec<Part>>,
+        cache: &mut Cache,
     ) -> (usize, &'static str) {
         // anchored by first
         //
@@ -251,7 +253,7 @@ impl<'a> SegmentAnalysis<'a> {
     fn case_unknown(
         &self,
         count_part_unknown: NonZeroUsize,
-        cache: &mut cache::Cache<Vec<Part>>,
+        cache: &mut Cache,
     ) -> (usize, &'static str) {
         if self.force_left_align.is_some()
             && self.counts_rest.is_empty()
@@ -388,8 +390,8 @@ impl<'a> SegmentAnalysis<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ForceLeftAlign;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ForceLeftAlign;
 
 // NOT copy
 struct DrainUnknown(usize);

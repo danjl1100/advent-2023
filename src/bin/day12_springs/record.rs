@@ -103,8 +103,10 @@ impl Record {
     pub fn count_possibilities(&self) -> usize {
         let mut caches = Caches::default();
         let result = self.inner.count_possibilities_inner(0, &mut caches);
-        eprintln!("{}", caches.segment.summary("SEGMENT"));
-        eprintln!("{}", caches.part.summary("PART"));
+        if crate::DEBUG_CACHE {
+            eprintln!("{}", caches.segment.summary("SEGMENT"));
+            eprintln!("{}", caches.part.summary("PART"));
+        }
         result
     }
 }
@@ -112,7 +114,7 @@ impl Record {
 #[derive(Default)]
 struct Caches {
     segment: cache::Cache<Segment>,
-    part: cache::Cache<Vec<Part>>,
+    part: super::analysis::Cache,
 }
 
 impl RecordInner {
