@@ -74,22 +74,22 @@ impl CharIndexEnd {
     }
 }
 
-struct CharIndices<'a> {
+pub struct CharIndices<'a> {
     iter: std::iter::Peekable<std::iter::Enumerate<std::str::CharIndices<'a>>>,
     last_char_sequence: Option<usize>,
 }
 impl<'a> CharIndices<'a> {
-    fn new(input: &'a str) -> Self {
+    pub fn new(input: &'a str) -> Self {
         CharIndices {
             iter: input.char_indices().enumerate().peekable(),
             last_char_sequence: None,
         }
     }
-    fn take_end_char_sequence(&mut self) -> Option<CharEndSequence> {
+    pub fn take_end_char_sequence(&mut self) -> Option<CharEndSequence> {
         let char_sequence = self.last_char_sequence.take()? + 1;
         Some(CharEndSequence { char_sequence })
     }
-    fn peek(&mut self) -> Option<(CharIndex, char)> {
+    pub fn peek(&mut self) -> Option<(CharIndex, char)> {
         let (char_sequence, (byte_index, char_value)) = self.iter.peek().copied()?;
         Some((
             CharIndex {
