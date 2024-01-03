@@ -1,3 +1,5 @@
+use advent_2023::either::Either;
+
 fn main() -> anyhow::Result<()> {
     println!("hello, where are the mirrors?");
 
@@ -248,25 +250,6 @@ impl std::fmt::Debug for Cell {
 enum Dimension {
     Row,
     Col,
-}
-
-#[derive(Clone)]
-enum Either<A, B> {
-    A(A),
-    B(B),
-}
-impl<A, B, T> Iterator for Either<A, B>
-where
-    A: Iterator<Item = T>,
-    B: Iterator<Item = T>,
-{
-    type Item = T;
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Either::A(inner) => inner.next(),
-            Either::B(inner) => inner.next(),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

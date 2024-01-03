@@ -479,3 +479,24 @@ pub mod nonempty {
         }};
     }
 }
+
+pub mod either {
+    #[derive(Clone)]
+    pub enum Either<A, B> {
+        A(A),
+        B(B),
+    }
+    impl<A, B, T> Iterator for Either<A, B>
+    where
+        A: Iterator<Item = T>,
+        B: Iterator<Item = T>,
+    {
+        type Item = T;
+        fn next(&mut self) -> Option<Self::Item> {
+            match self {
+                Either::A(inner) => inner.next(),
+                Either::B(inner) => inner.next(),
+            }
+        }
+    }
+}
