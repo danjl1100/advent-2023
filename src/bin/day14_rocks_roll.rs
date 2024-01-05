@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use advent_2023::either::Either;
 
 fn main() -> anyhow::Result<()> {
@@ -5,35 +7,49 @@ fn main() -> anyhow::Result<()> {
 
     let input = advent_2023::get_input_string()?;
 
-    let Stats { sum_round_weight } = eval_input(&input)?;
+    let Stats {
+        sum_round_weight,
+        sum_after_one_million,
+    } = eval_input(&input)?;
 
     println!("Sum of round weights: {sum_round_weight}");
+    println!("Sum of after 1 million... {sum_after_one_million}");
 
     Ok(())
 }
 
 struct Stats {
     sum_round_weight: usize,
+    sum_after_one_million: usize,
 }
 
 fn eval_input(input: &str) -> anyhow::Result<Stats> {
     let mut sum_round_weight = 0;
+    let mut sum_after_one_million = 0;
     let mut lines = input.lines();
     loop {
-        let Some(mut grid) = Grid::new(lines.by_ref())? else {
+        let Some(grid) = Grid::new(lines.by_ref())? else {
             break;
         };
-        grid.roll_stones(Direction::North);
-        sum_round_weight += grid.get_round_weight();
+        let mut single_roll = grid.clone();
+        single_roll.roll_stones(Direction::North);
+        sum_round_weight += single_roll.get_round_weight();
+
+        let after_million = grid.perform_cycles(1_000_000 - 1);
+        sum_after_one_million += after_million.get_round_weight();
     }
-    Ok(Stats { sum_round_weight })
+    Ok(Stats {
+        sum_round_weight,
+        sum_after_one_million,
+    })
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Grid {
     cells: Vec<Cell>,
     width: usize,
     max_row: usize,
+    random_direction_for_cache_key: Option<Direction>,
 }
 impl Grid {
     #[allow(dead_code)] // for tests
@@ -74,6 +90,7 @@ impl Grid {
             cells,
             width,
             max_row,
+            random_direction_for_cache_key: None,
         }))
     }
     fn iter(&self) -> impl Iterator<Item = (Point, Cell)> + '_ {
@@ -84,6 +101,7 @@ impl Grid {
         }
     }
     fn row_range(&self, row: usize) -> std::ops::Range<usize> {
+        assert!(row <= self.max_row, "row {row}");
         let start = Point { row, col: 0 }.index_for(self.width);
         let end = Point {
             row: row + 1,
@@ -108,6 +126,11 @@ impl Grid {
     //     }
     // }
     fn col_indices(&self, col: usize) -> impl Iterator<Item = usize> + Clone {
+        assert!(
+            col < self.width,
+            "col {col}, width {width}",
+            width = self.width
+        );
         if col >= self.width {
             Either::A(std::iter::empty())
         } else {
@@ -142,13 +165,15 @@ impl Grid {
     }
     fn roll_stones(&mut self, direction: Direction) {
         let (roll_dim, roll_step) = direction.roll_dim();
-        let cross_dim = direction.cross_dim();
+        // dbg!(("ROLLING", direction, roll_dim, roll_step));
 
-        let major_axis = self.size(cross_dim);
+        let major_axis = self.size(roll_dim);
         for major in 0..major_axis {
             let elem_indices = self.indices(roll_dim, major);
             let mut elems: Vec<_> = elem_indices.clone().map(|i| self.cells[i]).collect();
             let elems_len = elems.len();
+
+            // let DEBUG_elems = elems.clone();
 
             let (forward, reverse) = if roll_step < 0 {
                 (elems_len, 0)
@@ -179,6 +204,7 @@ impl Grid {
                     dest = Some(src);
                 }
             }
+            // dbg!("changed", major, &DEBUG_elems, &elems);
 
             for (i, elem) in elem_indices.zip(elems) {
                 self.cells[i] = elem;
@@ -195,10 +221,63 @@ impl Grid {
         }
         sum
     }
+    fn perform_cycles(self, total_count: usize) -> Self {
+        let reference_clone = {
+            let mut clone = self.clone();
+            clone.random_direction_for_cache_key = Some(Direction::East);
+            clone
+        };
+        let count = total_count;
+        self.perform_cycles_inner(count, Some(reference_clone), None)
+    }
+    fn perform_cycles_inner(
+        mut self,
+        total_count: usize,
+        find_cycle: Option<Self>,
+        start_direction: Option<Direction>,
+    ) -> Self {
+        let mut past_cases = find_cycle.map(|original| {
+            let mut map = HashMap::new();
+            map.insert(original, 0);
+            map
+        });
+        let mut direction = start_direction.unwrap_or_default();
+        for count_index in 0..total_count {
+            println!(
+                "{count_index:9}\t{}\t{direction:?}",
+                self.get_round_weight()
+            );
+            self.roll_stones(direction);
+            self.random_direction_for_cache_key = Some(direction);
+            if let Some(past_cases) = &mut past_cases {
+                if let Some(past_count_index) = past_cases.get(&self) {
+                    let cycle_length = count_index - past_count_index;
+                    let remaining = (total_count - past_count_index - 1) % cycle_length;
+                    dbg!(
+                        "DETECTED CYCLE!!!",
+                        count_index,
+                        past_count_index,
+                        cycle_length,
+                        remaining
+                    );
+                    return self.perform_cycles_inner(remaining, None, Some(direction.next()));
+                } else {
+                    past_cases.insert(self.clone(), count_index);
+                }
+            }
+            direction = direction.next();
+        }
+        // dbg!(&self, self.get_round_weight());
+        self
+    }
 }
 impl std::fmt::Debug for Grid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Grid:\n  ")?;
+        write!(f, "Grid:")?;
+        if let Some(direction) = &self.random_direction_for_cache_key {
+            write!(f, "\t(last {direction:?})")?;
+        }
+        write!(f, "\n  ")?;
         for col in 0..self.width {
             write!(f, "{}", col % 10)?;
         }
@@ -283,13 +362,13 @@ impl Iterator for Iter<'_> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Cell {
     Some(Rock),
     None,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Rock {
     Round,
     Cube,
@@ -321,21 +400,53 @@ enum Dimension {
     Row,
     Col,
 }
+// impl Dimension {
+//     fn other(self) -> Self {
+//         match self {
+//             Self::Row => Self::Col,
+//             Self::Col => Self::Row,
+//         }
+//     }
+// }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum Direction {
+    #[default]
     North,
+    West,
+    South,
+    East,
 }
 impl Direction {
+    // fn all() -> impl Iterator<Item = Self> {
+    //     const ALL: &'static [Direction] = &[
+    //         Direction::North,
+    //         Direction::West,
+    //         Direction::South,
+    //         Direction::East,
+    //     ];
+    //     std::iter::repeat(ALL).flatten().copied()
+    // }
     fn roll_dim(self) -> (Dimension, isize) {
         match self {
-            Direction::North => (Dimension::Col, -1),
+            Self::North => (Dimension::Col, -1),
+            Self::South => (Dimension::Col, 1),
+            Self::West => (Dimension::Row, -1),
+            Self::East => (Dimension::Row, 1),
         }
     }
 
-    fn cross_dim(self) -> Dimension {
+    // fn cross_dim(self) -> Dimension {
+    //     let (roll, _) = self.roll_dim();
+    //     roll.other()
+    // }
+
+    fn next(self) -> Self {
         match self {
-            Direction::North => Dimension::Row,
+            Self::North => Self::West,
+            Self::West => Self::South,
+            Self::South => Self::East,
+            Self::East => Self::North,
         }
     }
 }
@@ -365,16 +476,21 @@ mod tests {
     use crate::{eval_input, Direction, Grid};
 
     macro_rules! grid {
-        ($($line:expr),+ $(,)?) => {{
+        ($($line:expr),+ $(,)? $(; $direction:expr)?) => {{
             let lines = vec![
                 $({
                     let line: &'static str = $line;
                     line
                 }),+
             ];
-            Grid::new(lines.into_iter())
+            #[allow(unused_mut)]
+            let mut grid = Grid::new(lines.into_iter())
                 .expect("valid input")
-                .expect("nonempty by macro construction")
+                .expect("nonempty by macro construction");
+            $(
+                grid.random_direction_for_cache_key = Some($direction);
+            )?
+            grid
         }};
     }
 
@@ -394,13 +510,31 @@ mod tests {
                 modified.roll_stones(direction);
                 modified
             };
-            assert_eq!(modified, expected);
+            assert_eq!(modified, expected, "{direction:?}");
             modified
         }};
     }
 
+    macro_rules! assert_cycle {
+        (
+            original=$original:expr;
+            $(
+                $count:expr => $expected:expr;
+            )+
+        ) => {{
+            let original: Grid = $original;
+            // dbg!(&original);
+            $(
+                let count: usize = $count;
+                let expected: Grid = $expected;
+                let modified = original.clone().perform_cycles(count);
+                assert_eq!(modified, expected, "for count {count:?}");
+            )+
+        }};
+    }
+
     #[test]
-    fn small_roll() {
+    fn small_roll_north() {
         assert_roll! {
             original = grid! {
                 "...",
@@ -415,9 +549,51 @@ mod tests {
             };
         };
     }
+    #[test]
+    fn small_rolls() {
+        assert_roll! {
+            original = grid! {
+                ".#.",
+                ".O.",
+                "...",
+            };
+            roll Direction::East;
+            expected = grid! {
+                ".#.",
+                "..O",
+                "...",
+            };
+        };
+        assert_roll! {
+            original = grid! {
+                "...",
+                ".O#",
+                "...",
+            };
+            roll Direction::South;
+            expected = grid! {
+                "...",
+                "..#",
+                ".O.",
+            };
+        };
+        assert_roll! {
+            original = grid! {
+                "...",
+                ".O#",
+                "...",
+            };
+            roll Direction::West;
+            expected = grid! {
+                "...",
+                "O.#",
+                "...",
+            };
+        };
+    }
 
     #[test]
-    fn blocked_roll() {
+    fn blocked_roll_north() {
         let unchanged = grid! {
             ".##",
             ".O#",
@@ -430,7 +606,7 @@ mod tests {
         };
     }
     #[test]
-    fn roll_to_stop() {
+    fn roll_to_stop_north() {
         assert_roll! {
             original = grid! {
                 "...#",
@@ -449,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_round_weight() {
+    fn counts_round_weight_north() {
         let one = grid! {"O"};
         assert_eq!(one.get_round_weight(), 1);
         let five = grid! {"OOOOO"};
@@ -475,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_input_slowly() {
+    fn sample_input_slowly_north() {
         let grid = assert_roll! {
             original = grid! {
                 "O....#....",
@@ -506,7 +682,7 @@ mod tests {
         assert_eq!(grid.get_round_weight(), 136);
     }
     #[test]
-    fn sample_input() {
+    fn sample_input_north() {
         let input = "O....#....
 O.OO#....#
 .....##...
@@ -522,7 +698,25 @@ O.#..O.#.#
         assert_eq!(stats.sum_round_weight, 136);
     }
     #[test]
-    fn sample_input_and_another() {
+    #[ignore = "needs further debugging"]
+    fn sample_input_one_million() {
+        let input = "O....#....
+O.OO#....#
+.....##...
+OO.#O....O
+.O.....O#.
+O.#..O.#.#
+..O..#O..O
+.......O..
+#....###..
+#OO..#....
+";
+        let stats = eval_input(input).unwrap();
+        assert_eq!(stats.sum_after_one_million, 64);
+    }
+
+    #[test]
+    fn sample_input_and_another_north() {
         let input = "O....#....
 O.OO#....#
 .....##...
@@ -541,5 +735,338 @@ OOOO
 ";
         let stats = eval_input(input).unwrap();
         assert_eq!(stats.sum_round_weight, 136 + (4 + 4 + 4 + 3 + 1));
+    }
+
+    #[test]
+    fn tiny_cycle_lowlevel() {
+        assert_cycle! {
+            original = grid! {
+                "..",
+                "O.",
+            };
+            1 => grid! {
+                "O.",
+                ".."; Direction::North
+            };
+            2 => grid! {
+                "O.",
+                ".."; Direction::West
+            };
+            3 => grid! {
+                "..",
+                "O."; Direction::South
+            };
+            4 => grid! {
+                "..",
+                ".O"; Direction::East
+            };
+            5 => grid! {
+                ".O",
+                ".."; Direction::North
+            };
+            6 => grid! {
+                "O.",
+                ".."; Direction::West
+            };
+        }
+    }
+    #[test]
+    fn tiny_cycle() {
+        let input = "..
+O.";
+        let stats = eval_input(input).unwrap();
+        assert_eq!(stats.sum_after_one_million, 1);
+    }
+
+    #[test]
+    fn medium_cycle() {
+        assert_cycle! {
+            original = grid! {
+                "##O.####",
+                "######..",
+                "..####..",
+                ".O#####O",
+            };
+            1 => grid! {
+                "##O.####",
+                "######.O",
+                ".O####..",
+                "..#####."; Direction::North
+            };
+            2 => grid! {
+                "##O.####",
+                "######O.",
+                "O.####..",
+                "..#####."; Direction::West
+            };
+            3 => grid! {
+                "##O.####",
+                "######..",
+                "..####O.",
+                "O.#####."; Direction::South
+            };
+            4 => grid! {
+                "##.O####",
+                "######..",
+                "..####.O",
+                ".O#####."; Direction::East
+            };
+            8 => grid! {
+                "##.O####",
+                "######..",
+                "..####.O",
+                ".O#####."; Direction::East
+            };
+            8_000_000 => grid! {
+                "##.O####",
+                "######..",
+                "..####.O",
+                ".O#####."; Direction::East
+            };
+        }
+    }
+    #[test]
+    fn random_pattern() {
+        assert_roll! {
+            original = grid! {
+                "##O.####",
+                "######..",
+                "..####..",
+                ".O#####O",
+            };
+            roll Direction::North;
+            expected = grid! {
+                "##O.####",
+                "######.O",
+                ".O####..",
+                "..#####.",
+            };
+        };
+    }
+    #[test]
+    fn dimension_bounds() {
+        let mut direction = Direction::North;
+        for _ in 0..4 {
+            let mut tall = grid! {
+                "...",
+                "...",
+                "...",
+                "...",
+                ".O.",
+                "...",
+            };
+            tall.roll_stones(direction);
+
+            let mut wide = grid! {
+                ".......................",
+                ".....................O.",
+                ".......................",
+            };
+            wide.roll_stones(direction);
+
+            // advance
+            direction = direction.next();
+        }
+    }
+
+    #[test]
+    fn traveling_to_cycle() {
+        assert_cycle! {
+            original = grid! {
+                "#####################....",
+                "#####################.##O",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################O..##",
+                ".#..#################OO.#",
+                "....#################..##",
+            };
+            1 => grid! {
+                "#####################...O",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########O###",
+                ".###################O.O##",
+                ".#..#################...#",
+                "....#################..##"; Direction::North
+            };
+            2 => grid! {
+                "#####################O...",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########O###",
+                ".###################OO.##",
+                ".#..#################...#",
+                "....#################..##"; Direction::West
+            };
+            3 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################..O.##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################O..##",
+                ".#..#################O..#",
+                "....#################O.##"; Direction::South
+            };
+            4 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################...O##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################..O##",
+                ".#..#################..O#",
+                "....#################.O##"; Direction::East
+            };
+            // skip 5, North is not interesting
+            6 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################O...##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################O..##",
+                ".#..#################OO.#",
+                "....#################..##"; Direction::West
+            };
+            7 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########........O.####",
+                "###########.#############",
+                ".............########.###",
+                ".###################O..##",
+                ".#..#################...#",
+                "....#################OO##"; Direction::South
+            };
+            8 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########.........O####",
+                "###########.#############",
+                ".............########.###",
+                ".###################..O##",
+                ".#..#################...#",
+                "....#################OO##"; Direction::East
+            };
+            // skip 11, North is not interesting
+            10 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########O.........####",
+                "###########.#############",
+                ".............########O###",
+                ".###################O..##",
+                ".#..#################O..#",
+                "....#################..##"; Direction::West
+            };
+            11 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                "...........O.########.###",
+                ".###################O..##",
+                ".#..#################O..#",
+                "....#################O.##"; Direction::South
+            };
+            12 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                "............O########.###",
+                ".###################..O##",
+                ".#..#################..O#",
+                "....#################.O##"; Direction::East
+            };
+            // skip 13, North is not interesting
+            14 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                "O............########.###",
+                ".###################O..##",
+                ".#..#################OO.#",
+                "....#################..##"; Direction::West
+            };
+            15 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################O..##",
+                ".#..#################...#",
+                "O...#################OO##"; Direction::South
+            };
+            16 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################..O##",
+                ".#..#################...#",
+                "...O#################OO##"; Direction::East
+            };
+            16+4 => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################..O##",
+                ".#..#################..O#",
+                "...O#################.O##"; Direction::East
+            };
+            16+(10000000*4) => grid! {
+                "#####################....",
+                "#####################.##.",
+                "###################....##",
+                "###################.#####",
+                "###########..........####",
+                "###########.#############",
+                ".............########.###",
+                ".###################..O##",
+                ".#..#################...#",
+                "...O#################OO##"; Direction::East
+            };
+        }
     }
 }
