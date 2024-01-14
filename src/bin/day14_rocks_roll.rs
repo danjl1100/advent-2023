@@ -35,7 +35,7 @@ fn eval_input(input: &str) -> anyhow::Result<Stats> {
         single_roll.roll_stones(Direction::North);
         sum_round_weight += single_roll.get_round_weight();
 
-        let after_million = grid.perform_cycles(1_000_000 - 1);
+        let after_million = grid.perform_cycles(1_000_000_000);
         sum_after_one_million += after_million.get_round_weight();
     }
     Ok(Stats {
@@ -221,16 +221,20 @@ impl Grid {
         }
         sum
     }
-    fn perform_cycles(self, total_count: usize) -> Self {
+    fn perform_cycles(self, total_cycles_count: usize) -> Self {
+        // NOTE: A cycle is defined as 4 individual steps
+        let steps_count = 4 * total_cycles_count;
+        self.perform_steps(steps_count)
+    }
+    fn perform_steps(self, steps_count: usize) -> Self {
         let reference_clone = {
             let mut clone = self.clone();
             clone.random_direction_for_cache_key = Some(Direction::East);
             clone
         };
-        let count = total_count;
-        self.perform_cycles_inner(count, Some(reference_clone), None)
+        self.perform_steps_inner(steps_count, Some(reference_clone), None)
     }
-    fn perform_cycles_inner(
+    fn perform_steps_inner(
         mut self,
         total_count: usize,
         find_cycle: Option<Self>,
@@ -260,7 +264,7 @@ impl Grid {
                         cycle_length,
                         remaining
                     );
-                    return self.perform_cycles_inner(remaining, None, Some(direction.next()));
+                    return self.perform_steps_inner(remaining, None, Some(direction.next()));
                 } else {
                     past_cases.insert(self.clone(), count_index);
                 }
@@ -515,7 +519,7 @@ mod tests {
         }};
     }
 
-    macro_rules! assert_cycle {
+    macro_rules! assert_steps {
         (
             original=$original:expr;
             $(
@@ -527,7 +531,7 @@ mod tests {
             $(
                 let count: usize = $count;
                 let expected: Grid = $expected;
-                let modified = original.clone().perform_cycles(count);
+                let modified = original.clone().perform_steps(count);
                 assert_eq!(modified, expected, "for count {count:?}");
             )+
         }};
@@ -698,7 +702,6 @@ O.#..O.#.#
         assert_eq!(stats.sum_round_weight, 136);
     }
     #[test]
-    #[ignore = "needs further debugging"]
     fn sample_input_one_million() {
         let input = "O....#....
 O.OO#....#
@@ -734,12 +737,630 @@ O.#..O.#.#
 OOOO
 ";
         let stats = eval_input(input).unwrap();
+        // NOTE: 4+4+4+3+1 is from the final config,
+        //  OOO.
+        //  .O..
+        //  ...#
+        //  ...O
         assert_eq!(stats.sum_round_weight, 136 + (4 + 4 + 4 + 3 + 1));
     }
 
     #[test]
+    fn sample_input_micromanaging() {
+        let original = grid! {
+            "O....#....",
+            "O.OO#....#",
+            ".....##...",
+            "OO.#O....O",
+            ".O.....O#.",
+            "O.#..O.#.#",
+            "..O..#O..O",
+            ".......O..",
+            "#....###..",
+            "#OO..#....",
+        };
+        assert_steps! {
+            original = original.clone();
+            1 => grid! {
+                "OOOO.#.O..",
+                "OO..#....#",
+                "OO..O##..O",
+                "O..#.OO...",
+                "........#.",
+                "..#....#.#",
+                "..O..#.O.O",
+                "..O.......",
+                "#....###..",
+                "#....#...."; Direction::North
+            };
+            2 => grid! {
+                "OOOO.#O...",
+                "OO..#....#",
+                "OOO..##O..",
+                "O..#OO....",
+                "........#.",
+                "..#....#.#",
+                "O....#OO..",
+                "O.........",
+                "#....###..",
+                "#....#...."; Direction::West
+            };
+            3 => grid! {
+                ".....#....",
+                "....#.O..#",
+                "O..O.##...",
+                "O.O#......",
+                "O.O....O#.",
+                "O.#..O.#.#",
+                "O....#....",
+                "OO....OO..",
+                "#O...###..",
+                "#O..O#...."; Direction::South
+            };
+            4 => grid! {
+                ".....#....",
+                "....#...O#",
+                "...OO##...",
+                ".OO#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#....",
+                "......OOOO",
+                "#...O###..",
+                "#..OO#...."; Direction::East
+            };
+            5 => grid! {
+                ".OOO.#.OO.",
+                ".O..#....#",
+                "....O##...",
+                "...#OOO...",
+                "...OO.O.#.",
+                "..#.O.O#O#",
+                ".....#.O.O",
+                "..........",
+                "#....###..",
+                "#....#...."; Direction::North
+            };
+            6 => grid! {
+                "OOO..#OO..",
+                "O...#....#",
+                "O....##...",
+                "...#OOO...",
+                "OOO.....#.",
+                "..#OO..#O#",
+                ".....#OO..",
+                "..........",
+                "#....###..",
+                "#....#...."; Direction::West
+            };
+            7 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "..O#......",
+                "O.O....O#.",
+                "O.#..O.#.#",
+                "O....#O...",
+                "O.....OO..",
+                "#O..O###..",
+                "#O.OO#..O."; Direction::South
+            };
+            8 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "..O#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#...O",
+                ".......OOO",
+                "#..OO###..",
+                "#.OOO#...O"; Direction::East
+            };
+            9 => grid! {
+                ".OO..#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#OOO...",
+                "...OO.O.#.",
+                "..#O...#O#",
+                "..O..#.O.O",
+                ".........O",
+                "#....###.O",
+                "#....#...."; Direction::North
+            };
+            10 => grid! {
+                "OO...#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OOO...",
+                "OOO.....#.",
+                "..#O...#O#",
+                "O....#OO..",
+                "O.........",
+                "#....###O.",
+                "#....#...."; Direction::West
+            };
+            11 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "O..#......",
+                "O.O....O#.",
+                "O.#..O.#.#",
+                "O....#O...",
+                "O.....OO..",
+                "#O...###O.",
+                "#O.OO#..O."; Direction::South
+            };
+            12 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "..O#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#...O",
+                ".......OOO",
+                "#...O###.O",
+                "#.OOO#...O"; Direction::East
+            };
+            13 => grid! {
+                ".OO..#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#OOO...",
+                "...OO.O.#.",
+                "..#....#O#",
+                "..O..#.O.O",
+                ".........O",
+                "#....###.O",
+                "#....#...O"; Direction::North
+            };
+            14 => grid! {
+                "OO...#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OOO...",
+                "OOO.....#.",
+                "..#....#O#",
+                "O....#OO..",
+                "O.........",
+                "#....###O.",
+                "#....#O..."; Direction::West
+            };
+            15 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "O..#......",
+                "O.O....O#.",
+                "O.#..O.#.#",
+                "O....#O...",
+                "O.....OO..",
+                "#O...###O.",
+                "#O..O#O.O."; Direction::South
+            };
+            16 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "..O#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#...O",
+                ".......OOO",
+                "#...O###.O",
+                "#..OO#..OO"; Direction::East
+            };
+            17 => grid! {
+                ".OO..#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#OOO...",
+                "...OO.O.#.",
+                "..#....#O#",
+                ".....#.OOO",
+                ".........O",
+                "#....###.O",
+                "#....#...O"; Direction::North
+            };
+            18 => grid! {
+                "OO...#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OOO...",
+                "OOO.....#.",
+                "..#....#O#",
+                ".....#OOO.",
+                "O.........",
+                "#....###O.",
+                "#....#O..."; Direction::West
+            };
+            19 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "...#......",
+                "O.O....O#.",
+                "O.#..O.#.#",
+                "O....#O...",
+                "O.....OOO.",
+                "#O...###O.",
+                "#O..O#O.O."; Direction::South
+            };
+            20 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "...#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#...O",
+                "......OOOO",
+                "#...O###.O",
+                "#..OO#..OO"; Direction::East
+            };
+            21 => grid! {
+                ".O...#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#OOO...",
+                "...OO.O.#.",
+                "..#...O#O#",
+                ".....#.OOO",
+                ".........O",
+                "#....###.O",
+                "#....#...O"; Direction::North
+            };
+            22 => grid! {
+                "O....#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OOO...",
+                "OOO.....#.",
+                "..#O...#O#",
+                ".....#OOO.",
+                "O.........",
+                "#....###O.",
+                "#....#O..."; Direction::West
+            };
+            23 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "...#......",
+                "O.O....O#.",
+                "O.#..O.#.#",
+                "O....#O...",
+                "O.....OOO.",
+                "#....###O.",
+                "#O.OO#O.O."; Direction::South
+            };
+            24 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "...#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#...O",
+                "......OOOO",
+                "#....###.O",
+                "#.OOO#..OO"; Direction::East
+            };
+            25 => grid! {
+                ".O...#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#OOO...",
+                "...O..O.#.",
+                "..#...O#O#",
+                "..O..#.OOO",
+                ".........O",
+                "#....###.O",
+                "#....#...O"; Direction::North
+            };
+            26 => grid! {
+                "O....#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OOO...",
+                "OO......#.",
+                "..#O...#O#",
+                "O....#OOO.",
+                "O.........",
+                "#....###O.",
+                "#....#O..."; Direction::West
+            };
+            27 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "O..#......",
+                "O......O#.",
+                "O.#..O.#.#",
+                "O....#O...",
+                "O.....OOO.",
+                "#....###O.",
+                "#O.OO#O.O."; Direction::South
+            };
+            28 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "..O#......",
+                "......OO#.",
+                ".O#...O#.#",
+                "....O#...O",
+                "......OOOO",
+                "#....###.O",
+                "#.OOO#..OO"; Direction::East
+            };
+            29 => grid! {
+                ".OO..#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#O.O...",
+                "...O..O.#.",
+                "..#...O#O#",
+                "..O..#.OOO",
+                ".........O",
+                "#....###.O",
+                "#....#...O"; Direction::North
+            };
+            30 => grid! {
+                "OO...#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OO....",
+                "OO......#.",
+                "..#O...#O#",
+                "O....#OOO.",
+                "O.........",
+                "#....###O.",
+                "#....#O..."; Direction::West
+            };
+            31 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "O..#......",
+                "O......O#.",
+                "O.#..O.#.#",
+                "O....#....",
+                "O.....OOO.",
+                "#O...###O.",
+                "#O.OO#O.O."; Direction::South
+            };
+            32 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "..O#......",
+                "......OO#.",
+                ".O#...O#.#",
+                "....O#....",
+                "......OOOO",
+                "#...O###.O",
+                "#.OOO#..OO"; Direction::East
+            };
+            33 => grid! {
+                ".OO..#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#O.O...",
+                "...OO.O.#.",
+                "..#...O#O#",
+                "..O..#.OOO",
+                ".........O",
+                "#....###.O",
+                "#....#...."; Direction::North
+            };
+            34 => grid! {
+                "OO...#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OO....",
+                "OOO.....#.",
+                "..#O...#O#",
+                "O....#OOO.",
+                "O.........",
+                "#....###O.",
+                "#....#...."; Direction::West
+            };
+            35 => grid! {
+                ".....#....",
+                "....#.O..#",
+                ".....##...",
+                "O..#......",
+                "O.O....O#.",
+                "O.#..O.#.#",
+                "O....#....",
+                "O.....OOO.",
+                "#O...###O.",
+                "#O.OO#..O."; Direction::South
+            };
+            36 => grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "..O#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#....",
+                "......OOOO",
+                "#...O###.O",
+                "#.OOO#...O"; Direction::East
+            };
+            37 => grid! {
+                ".OO..#.OO.",
+                "....#....#",
+                "....O##...",
+                "...#OOO...",
+                "...OO.O.#.",
+                "..#...O#O#",
+                "..O..#.O.O",
+                ".........O",
+                "#....###.O",
+                "#....#...."; Direction::North
+            };
+            // NOTE on step 38, detects cycle:
+            //     count_index = 37
+            //     past_count_index = 9  (e.g. same as "10" total in this test)
+            //     cycle_length = 28
+            //     remaining = 0
+            38 => grid! {
+                "OO...#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OOO...",
+                "OOO.....#.",
+                "..#O...#O#",
+                "O....#OO..",
+                "O.........",
+                "#....###O.",
+                "#....#...."; Direction::West
+            };
+        };
+        assert_steps! {
+            original = original.clone();
+            38 + 35712*28 => grid! {
+                "OO...#OO..",
+                "....#....#",
+                "O....##...",
+                "...#OOO...",
+                "OOO.....#.",
+                "..#O...#O#",
+                "O....#OO..",
+                "O.........",
+                "#....###O.",
+                "#....#...."; Direction::West
+            };
+            4_000_000_000 =>
+            /* 24 => */ grid! {
+                ".....#....",
+                "....#...O#",
+                ".....##...",
+                "...#......",
+                ".....OOO#.",
+                ".O#...O#.#",
+                "....O#...O",
+                "......OOOO",
+                "#....###.O",
+                "#.OOO#..OO"; Direction::East
+            };
+            // /* 38 => */ grid! {
+            //     "OO...#OO..",
+            //     "....#....#",
+            //     "O....##...",
+            //     "...#OOO...",
+            //     "OOO.....#.",
+            //     "..#O...#O#",
+            //     "O....#OO..",
+            //     "O.........",
+            //     "#....###O.",
+            //     "#....#...."; Direction::West
+            // };
+            // /* 30 => */ grid! {
+            //     "OO...#OO..",
+            //     "....#....#",
+            //     "O....##...",
+            //     "...#OO....",
+            //     "OO......#.",
+            //     "..#O...#O#",
+            //     "O....#OOO.",
+            //     "O.........",
+            //     "#....###O.",
+            //     "#....#O..."; Direction::West
+            // };
+            // /* 31 => */ grid! {
+            //     ".....#....",
+            //     "....#.O..#",
+            //     ".....##...",
+            //     "O..#......",
+            //     "O......O#.",
+            //     "O.#..O.#.#",
+            //     "O....#....",
+            //     "O.....OOO.",
+            //     "#O...###O.",
+            //     "#O.OO#O.O."; Direction::South
+            // };
+            // /* 32 => */ grid! {
+            //     ".....#....",
+            //     "....#...O#",
+            //     ".....##...",
+            //     "..O#......",
+            //     "......OO#.",
+            //     ".O#...O#.#",
+            //     "....O#....",
+            //     "......OOOO",
+            //     "#...O###.O",
+            //     "#.OOO#..OO"; Direction::East
+            // };
+        }
+
+        assert_eq!(37 - 9, 28);
+
+        // 4_000_000_000 / 28 = 142857141 remainder 14
+        assert_eq!(38 + (28 * 142857141) + 14, 4_000_000_000_u64);
+
+        let state10_step9 = grid! {
+            "OO...#OO..",
+            "....#....#",
+            "O....##...",
+            "...#OOO...",
+            "OOO.....#.",
+            "..#O...#O#",
+            "O....#OO..",
+            "O.........",
+            "#....###O.",
+            "#....#...."; Direction::West
+        };
+        let state38_step37 = grid! {
+            "OO...#OO..",
+            "....#....#",
+            "O....##...",
+            "...#OOO...",
+            "OOO.....#.",
+            "..#O...#O#",
+            "O....#OO..",
+            "O.........",
+            "#....###O.",
+            "#....#...."; Direction::West
+        };
+        assert_eq!(state10_step9, state38_step37);
+
+        let state24_step23 = grid! {
+            ".....#....",
+            "....#...O#",
+            ".....##...",
+            "...#......",
+            ".....OOO#.",
+            ".O#...O#.#",
+            "....O#...O",
+            "......OOOO",
+            "#....###.O",
+            "#.OOO#..OO"; Direction::East
+        };
+        // let state32_step31 = grid! {
+        //     ".....#....",
+        //     "....#...O#",
+        //     ".....##...",
+        //     "..O#......",
+        //     "......OO#.",
+        //     ".O#...O#.#",
+        //     "....O#....",
+        //     "......OOOO",
+        //     "#...O###.O",
+        //     "#.OOO#..OO"; Direction::East
+        // };
+        assert_eq!(state24_step23.get_round_weight(), 64);
+    }
+
+    #[test]
     fn tiny_cycle_lowlevel() {
-        assert_cycle! {
+        assert_steps! {
             original = grid! {
                 "..",
                 "O.",
@@ -780,7 +1401,7 @@ O.";
 
     #[test]
     fn medium_cycle() {
-        assert_cycle! {
+        assert_steps! {
             original = grid! {
                 "##O.####",
                 "######..",
@@ -871,19 +1492,21 @@ O.";
 
     #[test]
     fn traveling_to_cycle() {
-        assert_cycle! {
-            original = grid! {
-                "#####################....",
-                "#####################.##O",
-                "###################....##",
-                "###################.#####",
-                "###########..........####",
-                "###########.#############",
-                ".............########.###",
-                ".###################O..##",
-                ".#..#################OO.#",
-                "....#################..##",
-            };
+        let original = grid! {
+            "#####################....",
+            "#####################.##O",
+            "###################....##",
+            "###################.#####",
+            "###########..........####",
+            "###########.#############",
+            ".............########.###",
+            ".###################O..##",
+            ".#..#################OO.#",
+            "....#################..##",
+        };
+        assert_steps! {
+            original = original.clone();
+            0 => original;
             1 => grid! {
                 "#####################...O",
                 "#####################.##.",
