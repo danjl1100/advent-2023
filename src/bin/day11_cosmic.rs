@@ -3,7 +3,7 @@ use std::{
     num::NonZeroUsize,
 };
 
-use advent_2023::point::Point;
+use advent_2023::{dimension::Dimension, point::Point};
 
 const FACTOR_MILLION: NonZeroUsize = const_factor(1_000_000);
 
@@ -154,33 +154,6 @@ impl Galaxies {
                     .sum::<usize>()
             })
             .sum()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Dimension {
-    Row,
-    Col,
-}
-impl Dimension {
-    const ALL: &'static [Self] = &[Self::Row, Self::Col];
-    fn of(self, target: Point) -> usize {
-        match self {
-            Dimension::Row => target.row,
-            Dimension::Col => target.col,
-        }
-    }
-    fn new_point(self, amount: usize) -> Point {
-        match self {
-            Dimension::Row => Point {
-                row: amount,
-                col: 0,
-            },
-            Dimension::Col => Point {
-                row: 0,
-                col: amount,
-            },
-        }
     }
 }
 

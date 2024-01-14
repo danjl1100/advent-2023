@@ -1,4 +1,4 @@
-use advent_2023::{either::Either, point::Point};
+use advent_2023::{dimension::Dimension, either::Either, point::Point};
 
 fn main() -> anyhow::Result<()> {
     println!("hello, where are the mirrors?");
@@ -247,12 +247,6 @@ impl std::fmt::Debug for Cell {
         };
         write!(f, "{c}")
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Dimension {
-    Row,
-    Col,
 }
 
 #[cfg(test)]

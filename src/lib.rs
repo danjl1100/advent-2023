@@ -532,6 +532,43 @@ pub mod point {
     }
 }
 
+pub mod dimension {
+    use crate::point::Point;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Dimension {
+        Row,
+        Col,
+    }
+    impl Dimension {
+        pub const ALL: &'static [Self] = &[Self::Row, Self::Col];
+        pub fn of(self, target: Point) -> usize {
+            match self {
+                Dimension::Row => target.row,
+                Dimension::Col => target.col,
+            }
+        }
+        pub fn new_point(self, amount: usize) -> Point {
+            match self {
+                Dimension::Row => Point {
+                    row: amount,
+                    col: 0,
+                },
+                Dimension::Col => Point {
+                    row: 0,
+                    col: amount,
+                },
+            }
+        }
+        pub fn opposite(self) -> Self {
+            match self {
+                Self::Row => Self::Col,
+                Self::Col => Self::Row,
+            }
+        }
+    }
+}
+
 pub mod direction {
     use super::point::Point;
 

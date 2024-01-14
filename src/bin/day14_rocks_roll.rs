@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use advent_2023::{either::Either, point::Point};
+use advent_2023::{dimension::Dimension, either::Either, point::Point};
 
 fn main() -> anyhow::Result<()> {
     println!("hello, turns out some ROCKS will ROLL");
@@ -401,20 +401,6 @@ impl std::fmt::Debug for Cell {
         write!(f, "{c}")
     }
 }
-
-#[derive(Clone, Copy, Debug)]
-enum Dimension {
-    Row,
-    Col,
-}
-// impl Dimension {
-//     fn other(self) -> Self {
-//         match self {
-//             Self::Row => Self::Col,
-//             Self::Col => Self::Row,
-//         }
-//     }
-// }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum Direction {
