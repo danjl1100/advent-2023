@@ -1,4 +1,4 @@
-use advent_2023::either::Either;
+use advent_2023::{either::Either, point::Point};
 
 fn main() -> anyhow::Result<()> {
     println!("hello, where are the mirrors?");
@@ -80,12 +80,15 @@ impl Grid {
         }))
     }
     fn row(&self, row: usize) -> Option<&[Cell]> {
-        let start = Point { row, col: 0 }.index_for(self.width);
+        let start = Point { row, col: 0 }
+            .index_for_width(self.width)
+            .expect("col 0 within nonzero width");
         let end = Point {
             row: row + 1,
             col: 0,
         }
-        .index_for(self.width);
+        .index_for_width(self.width)
+        .expect("col 0 within nonzero width");
         self.cells.get(start..end)
     }
     fn col(&self, col: usize) -> impl Iterator<Item = Cell> + Clone + '_ {
@@ -212,7 +215,7 @@ impl Iterator for ColIter<'_> {
         let row = self.next_row?;
         let elem = {
             let point = Point { row, col: self.col };
-            let index = point.index_for(self.width);
+            let index = point.index_for_width(self.width)?;
             self.cells.get(index).copied()
         };
 
@@ -250,27 +253,6 @@ impl std::fmt::Debug for Cell {
 enum Dimension {
     Row,
     Col,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Point {
-    row: usize,
-    col: usize,
-}
-impl Point {
-    fn index_for(self, width: usize) -> usize {
-        assert!(width > 0);
-        let Self { row, col } = self;
-        (row * width) + col
-    }
-    // TODO delete, unused
-    // fn from_index_width(index: usize, width: usize) -> Self {
-    //     assert!(width > 0);
-    //     Self {
-    //         row: index / width,
-    //         col: index % width,
-    //     }
-    // }
 }
 
 #[cfg(test)]

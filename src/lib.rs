@@ -500,3 +500,105 @@ pub mod either {
         }
     }
 }
+
+pub mod point {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct Point {
+        pub row: usize,
+        pub col: usize,
+    }
+    impl Point {
+        pub fn index_for_width(self, width: usize) -> Option<usize> {
+            let Self { row, col } = self;
+            (col < width).then_some(row * width + col)
+        }
+        pub fn from_index_width(index: usize, width: usize) -> Self {
+            assert!(width > 0);
+            Self {
+                row: index / width,
+                col: index % width,
+            }
+        }
+    }
+    impl std::ops::Add for Point {
+        type Output = Self;
+
+        fn add(self, other: Self) -> Self::Output {
+            Self {
+                row: self.row + other.row,
+                col: self.col + other.col,
+            }
+        }
+    }
+}
+
+pub mod direction {
+    use super::point::Point;
+
+    pub const NORTH: Direction = Direction::V(DirectionV::North);
+    pub const SOUTH: Direction = Direction::V(DirectionV::South);
+    pub const EAST: Direction = Direction::H(DirectionH::East);
+    pub const WEST: Direction = Direction::H(DirectionH::West);
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Direction {
+        V(DirectionV),
+        H(DirectionH),
+    }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum DirectionV {
+        North,
+        South,
+    }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum DirectionH {
+        East,
+        West,
+    }
+    impl Direction {
+        pub const ALL: &'static [Self] = &[NORTH, SOUTH, EAST, WEST];
+        pub fn of(self, src: Point) -> Option<Point> {
+            let Point { row, col } = src;
+
+            let row = match self {
+                Self::V(DirectionV::North) => row.checked_sub(1),
+                Self::V(DirectionV::South) => Some(row + 1),
+                Self::H(_) => Some(row),
+            };
+            let col = match self {
+                Self::H(DirectionH::West) => col.checked_sub(1),
+                Self::H(DirectionH::East) => Some(col + 1),
+                Self::V(_) => Some(col),
+            };
+
+            row.zip(col).map(|(row, col)| Point { row, col })
+        }
+    }
+    impl std::ops::Neg for Direction {
+        type Output = Self;
+        fn neg(self) -> Self::Output {
+            match self {
+                Self::V(inner) => Self::V(-inner),
+                Self::H(inner) => Self::H(-inner),
+            }
+        }
+    }
+    impl std::ops::Neg for DirectionV {
+        type Output = Self;
+        fn neg(self) -> Self::Output {
+            match self {
+                Self::North => Self::South,
+                Self::South => Self::North,
+            }
+        }
+    }
+    impl std::ops::Neg for DirectionH {
+        type Output = Self;
+        fn neg(self) -> Self::Output {
+            match self {
+                Self::East => Self::West,
+                Self::West => Self::East,
+            }
+        }
+    }
+}

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use advent_2023::either::Either;
+use advent_2023::{either::Either, point::Point};
 
 fn main() -> anyhow::Result<()> {
     println!("hello, turns out some ROCKS will ROLL");
@@ -102,12 +102,15 @@ impl Grid {
     }
     fn row_range(&self, row: usize) -> std::ops::Range<usize> {
         assert!(row <= self.max_row, "row {row}");
-        let start = Point { row, col: 0 }.index_for(self.width);
+        let start = Point { row, col: 0 }
+            .index_for_width(self.width)
+            .expect("col 0 within nonzero width");
         let end = Point {
             row: row + 1,
             col: 0,
         }
-        .index_for(self.width);
+        .index_for_width(self.width)
+        .expect("col 0 within nonzero width");
         start..end
     }
     fn row(&self, row: usize) -> Option<&[Cell]> {
@@ -316,7 +319,7 @@ impl Iterator for ColIter<'_> {
         let row = self.next_row?;
         let elem = {
             let point = Point { row, col: self.col };
-            let index = point.index_for(self.width);
+            let index = point.index_for_width(self.width)?;
             self.cells.get(index).copied()
         };
 
@@ -339,7 +342,7 @@ impl Iterator for ColIterIndex {
         let row = self.next_row?;
         let index = {
             let point = Point { row, col: self.col };
-            let index = point.index_for(self.width);
+            let index = point.index_for_width(self.width)?;
             (index < self.len).then_some(index)
         };
 
@@ -451,26 +454,6 @@ impl Direction {
             Self::West => Self::South,
             Self::South => Self::East,
             Self::East => Self::North,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Point {
-    row: usize,
-    col: usize,
-}
-impl Point {
-    fn index_for(self, width: usize) -> usize {
-        assert!(width > 0);
-        let Self { row, col } = self;
-        (row * width) + col
-    }
-    fn from_index_width(index: usize, width: usize) -> Self {
-        assert!(width > 0);
-        Self {
-            row: index / width,
-            col: index % width,
         }
     }
 }

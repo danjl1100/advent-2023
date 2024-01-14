@@ -3,6 +3,8 @@ use std::{
     num::NonZeroUsize,
 };
 
+use advent_2023::point::Point;
+
 const FACTOR_MILLION: NonZeroUsize = const_factor(1_000_000);
 
 fn main() -> anyhow::Result<()> {
@@ -182,12 +184,10 @@ impl Dimension {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Point {
-    row: usize,
-    col: usize,
+trait TaxicabDistance {
+    fn get_distance(self, other: Self) -> usize;
 }
-impl Point {
+impl TaxicabDistance for Point {
     /// <https://en.wikipedia.org/wiki/Taxicab_geometry>
     fn get_distance(self, other: Self) -> usize {
         let Self { row, col } = self;
@@ -206,16 +206,6 @@ impl Point {
             max - min
         };
         row_delta + col_delta
-    }
-}
-impl std::ops::Add for Point {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self::Output {
-        Self {
-            row: self.row + other.row,
-            col: self.col + other.col,
-        }
     }
 }
 
@@ -279,7 +269,7 @@ impl std::fmt::Display for Galaxies {
 mod tests {
     use std::num::NonZeroUsize;
 
-    use crate::{const_factor, Galaxies, Point};
+    use crate::{const_factor, Galaxies, Point, TaxicabDistance};
 
     const FACTOR_TWO: NonZeroUsize = const_factor(2);
     const FACTOR_TEN: NonZeroUsize = const_factor(10);
