@@ -77,7 +77,6 @@ in rec {
     inherit my-crate;
 
     inherit my-crate-doc;
-    inherit my-crate-doc-deps;
 
     # Run clippy (and deny all warnings) on the crate source,
     # again, resuing the dependency artifacts from above.
