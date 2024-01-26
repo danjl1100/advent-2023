@@ -9,28 +9,89 @@ fn main() -> anyhow::Result<()> {
 
     let input = advent_2023::get_input_string()?;
 
-    let Stats { energy_sum } = eval_input(&input)?;
+    let Stats {
+        default_energy_sum,
+        highest_energy_sum,
+    } = eval_input(&input)?;
 
-    println!("Sum of reflection notes: {energy_sum}");
+    println!("Sum of energy (default entry): {default_energy_sum}");
+    println!("Highest energy sum: {highest_energy_sum}");
 
     Ok(())
 }
 
 struct Stats {
-    energy_sum: usize,
+    default_energy_sum: usize,
+    highest_energy_sum: usize,
 }
 
 fn eval_input(input: &str) -> anyhow::Result<Stats> {
+    const DEFAULT_ENTRY: (Point, Direction) = (Point { row: 0, col: 0 }, EAST);
+
     let Some(grid) = Grid::new(input)? else {
         anyhow::bail!("no grid in input")
     };
     println!("{grid:?}");
-    let energy = EnergizedGrid::new(grid);
-    println!("{energy:?}");
-    let energy_sum = energy.sum();
-    Ok(Stats { energy_sum })
+
+    let default_energy = EnergizedGrid::new(&grid, DEFAULT_ENTRY);
+    println!("{default_energy:?}");
+    let default_energy_sum = default_energy.sum();
+
+    let row_first = 0;
+    let row_last = grid.max_row;
+    let col_first = 0;
+    let col_last = grid.width - 1;
+
+    let row_entries = (row_first..=row_last).flat_map(|row| {
+        vec![
+            (
+                Point {
+                    row,
+                    col: col_first,
+                },
+                EAST,
+            ),
+            (
+                Point {
+                    row,
+                    col: col_last, //
+                },
+                WEST,
+            ),
+        ]
+    });
+    let col_entries = (col_first..=col_last).flat_map(|col| {
+        vec![
+            (
+                Point {
+                    row: row_first,
+                    col,
+                },
+                SOUTH,
+            ),
+            (
+                Point {
+                    row: row_last, //
+                    col,
+                },
+                NORTH,
+            ),
+        ]
+    });
+
+    let highest_energy_sum = row_entries
+        .chain(col_entries)
+        .map(|entry| EnergizedGrid::new(&grid, entry).sum())
+        .max()
+        .expect("nonempty entrypoints");
+
+    Ok(Stats {
+        default_energy_sum,
+        highest_energy_sum,
+    })
 }
 
+#[derive(Clone)]
 struct Grid<T> {
     cells: Vec<T>,
     width: usize,
@@ -147,13 +208,13 @@ impl<T> Grid<T> {
 //     }
 // }
 
-struct EnergizedGrid {
-    cells: Grid<Cell>,
+struct EnergizedGrid<'a> {
+    cells: &'a Grid<Cell>,
     energized: Grid<Energized>,
     traveled: Grid<DirectionMap<()>>,
 }
-impl EnergizedGrid {
-    fn new(cells: Grid<Cell>) -> Self {
+impl<'a> EnergizedGrid<'a> {
+    fn new(cells: &'a Grid<Cell>, (entry_point, entry_direction): (Point, Direction)) -> Self {
         let energized = cells.empty_with(Energized::default);
         let traveled = cells.empty_with(DirectionMap::default);
         let mut this = Self {
@@ -161,7 +222,7 @@ impl EnergizedGrid {
             energized,
             traveled,
         };
-        this.activate(Point { row: 0, col: 0 }, EAST);
+        this.activate(entry_point, entry_direction);
         this
     }
     fn activate_next(&mut self, current: Point, next_direction: Direction) {
@@ -302,7 +363,7 @@ impl std::fmt::Debug for Energized {
         write!(f, "{c}")
     }
 }
-impl std::fmt::Debug for EnergizedGrid {
+impl std::fmt::Debug for EnergizedGrid<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             cells,
@@ -368,6 +429,7 @@ mod tests {
 .|....-|.\
 ..//.|...."#;
         let stats = eval_input(input).unwrap();
-        assert_eq!(stats.energy_sum, 46);
+        assert_eq!(stats.default_energy_sum, 46);
+        assert_eq!(stats.highest_energy_sum, 51);
     }
 }
